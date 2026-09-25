@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Setcar Tech</string>
+    <string name="title_activity_main">Setcar Tech</string>
+    <string name="package_name">com.setcar.tech</string>
+    <string name="custom_url_scheme">com.setcar.tech</string>
+</resources>

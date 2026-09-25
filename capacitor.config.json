@@ -1,0 +1,6 @@
+{
+  "appId": "com.setcar.tech",
+  "appName": "Setcar Tech",
+  "webDir": "dist",
+  "bundledWebRuntime": false
+}

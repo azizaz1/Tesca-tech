@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.env
+.env.*
+!.env.example
+commandlinetools-extract/
+commandlinetools-win.zip
+android/.gradle/
+android/.idea/
+android/local.properties
+android/**/build/
