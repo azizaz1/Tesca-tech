@@ -10,27 +10,48 @@ const assets = [
   ['NET-001', 'Routeur principal', 'Infrastructure', 'Salle serveur · RDC'],
 ]
 
-const initialTickets = [
-  { id: 'INC-1042', assetId: 'PC-FIN-014', reporter: 'Amel Ben Salem', issue: 'Le poste ne démarre plus après une coupure de courant.', urgency: 'Haute', status: 'Ouvert', createdAt: 'Aujourd’hui · 09:18', assignee: '', note: '' },
-  { id: 'INC-1041', assetId: 'IMP-RH-002', reporter: 'Meriem Gharbi', issue: 'Bourrage papier répétitif.', urgency: 'Normale', status: 'En cours', createdAt: 'Aujourd’hui · 08:35', assignee: 'Mourad', note: 'Vérification du bac papier en cours.' },
-]
-
 const getAsset = (id) => assets.find((asset) => asset[0] === id) || assets[0]
-const loadTickets = () => {
-  try {
-    return JSON.parse(localStorage.getItem('setcar-tickets')) || initialTickets
-  } catch {
-    return initialTickets
+const statusLabels = { open: 'Ouvert', assigned: 'Attribué', in_progress: 'En cours', waiting_parts: 'En attente de pièces', resolved: 'Résolu', closed: 'Clôturé', reopened: 'Réouvert' }
+const dbStatus = { Ouvert: 'open', Attribué: 'assigned', 'En cours': 'in_progress', 'En attente de pièces': 'waiting_parts', Résolu: 'resolved', Clôturé: 'closed', Réouvert: 'reopened' }
+
+const mapTicket = (row, profiles = {}) => ({
+  dbId: row.id,
+  id: row.reference,
+  assetId: row.asset_id,
+  reporter: profiles[row.reporter_id] || 'Employé',
+  issue: row.issue,
+  urgency: row.priority === 'high' ? 'Haute' : 'Normale',
+  status: statusLabels[row.status] || 'Ouvert',
+  createdAt: new Date(row.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
+  assignee: profiles[row.technician_id] || '',
+  note: row.technician_note || '',
+})
+
+const readTickets = async (role) => {
+  let query = supabase.from('tickets').select('*').order('created_at', { ascending: false })
+  if (role === 'employee') {
+    const { data: authData } = await supabase.auth.getUser()
+    if (authData.user) query = query.eq('reporter_id', authData.user.id)
   }
+  const { data: rows, error } = await query
+  if (error) throw error
+  if (!rows?.length) return []
+  const userIds = [...new Set(rows.flatMap((row) => [row.reporter_id, row.technician_id].filter(Boolean)))]
+  const { data: people } = await supabase.from('profiles').select('id, full_name').in('id', userIds)
+  const names = Object.fromEntries((people || []).map((person) => [person.id, person.full_name]))
+  return rows.map((row) => mapTicket(row, names))
 }
 
 export default function App() {
   const [user, setUser] = useState(null)
-  const [tickets, setTickets] = useState(loadTickets)
+  const [tickets, setTickets] = useState([])
+  const [ticketError, setTicketError] = useState('')
+  const [notifications, setNotifications] = useState([])
 
   const loadProfile = async (authUser) => {
     if (!authUser) {
       setUser(null)
+      setTickets([])
       return
     }
     const { data } = await supabase.from('profiles').select('full_name, role').eq('id', authUser.id).single()
@@ -43,10 +64,60 @@ export default function App() {
     return () => listener.subscription.unsubscribe()
   }, [])
 
-  useEffect(() => localStorage.setItem('setcar-tickets', JSON.stringify(tickets)), [tickets])
+  useEffect(() => {
+    if (!user) {
+      setNotifications([])
+      return undefined
+    }
+    try {
+      setNotifications(JSON.parse(localStorage.getItem(`notifications-${user.id}`) || '[]'))
+    } catch {
+      setNotifications([])
+    }
+    return undefined
+  }, [user?.id])
+
+  useEffect(() => {
+    if (user) localStorage.setItem(`notifications-${user.id}`, JSON.stringify(notifications.slice(0, 40)))
+  }, [user?.id, notifications])
+
+  useEffect(() => {
+    if (!user) return undefined
+    let active = true
+    const refresh = async () => {
+      try {
+        const nextTickets = await readTickets(user.role)
+        if (active) {
+          setTickets(nextTickets)
+          setTicketError('')
+        }
+      } catch (error) {
+        if (active) setTicketError(error.message || 'Impossible de charger les demandes.')
+      }
+    }
+    void refresh()
+    const channel = supabase.channel(`tickets-${user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
+      const row = payload.new
+      let notification
+      if (payload.eventType === 'INSERT' && user.role === 'technician' && row?.reference) {
+        notification = { title: 'Nouvel incident', message: `Une nouvelle demande ${row.reference} a été signalée.` }
+      } else if (payload.eventType === 'UPDATE' && user.role === 'employee' && row?.reporter_id === user.id && payload.old?.status !== row.status) {
+        const status = statusLabels[row.status] || row.status
+        notification = { title: 'Statut mis à jour', message: `Votre demande ${row.reference} est maintenant : ${status}.` }
+      }
+      if (notification) {
+        setNotifications((current) => [{ ...notification, id: `${Date.now()}-${Math.random()}`, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 40))
+      }
+      void refresh()
+    }).subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [user])
 
   return user
-    ? <Portal user={user} tickets={tickets} setTickets={setTickets} logout={() => supabase.auth.signOut()} />
+    ? <Portal user={user} tickets={tickets} setTickets={setTickets} ticketError={ticketError} notifications={notifications} setNotifications={setNotifications} logout={() => supabase.auth.signOut()} />
     : <Login />
 }
 
@@ -82,9 +153,9 @@ function Login() {
           <div className="showcase-top"><Brand light /><span className="showcase-tag">SUPPORT INFORMATIQUE</span></div>
           <div className="showcase-copy">
             <div className="logo-tile"><img src={tescaLogo} alt="Logo Tesca Group" /></div>
-            <p className="showcase-kicker">LE SUPPORT, EN MOUVEMENT</p>
-            <h2>Chaque demande<br />trouve sa solution.</h2>
-            <p className="showcase-description">Un espace simple pour signaler un incident et suivre son avancement, du premier clic à la résolution.</p>
+            <p className="showcase-kicker">SUPPORT INFORMATIQUE · MATÉRIEL</p>
+            <h2>Votre matériel<br />repart du bon pied.</h2>
+            <p className="showcase-description">Signalez une panne, retrouvez vos demandes et suivez chaque intervention jusqu’à la résolution.</p>
           </div>
           <div className="showcase-foot"><span className="status-dot" /> Votre équipe IT, toujours à vos côtés <span className="foot-year">TESCA GROUP</span></div>
           <div className="showcase-orb orb-one" /><div className="showcase-orb orb-two" />
@@ -93,7 +164,8 @@ function Login() {
         <section className="auth-panel">
           <div className="mobile-brand"><span className="mobile-logo"><img src={tescaLogo} alt="" /></span><span className="mobile-brand-copy"><b>Tesca <i>Tech</i></b><small>SUPPORT INFORMATIQUE</small></span><span className="mobile-secure"><span /> SÉCURISÉ</span></div>
           <div className="auth-content">
-            <div className="auth-heading"><p className="eyebrow">{signup ? 'VOTRE ESPACE TESCA' : 'VOTRE ASSISTANT INFORMATIQUE'}</p><h1>{signup ? 'Créer mon compte' : 'Content de vous revoir'}<span className="auth-title-dot">.</span></h1><p className="subtle">{signup ? 'Renseignez vos informations pour commencer.' : 'Connectez-vous pour retrouver votre équipe support.'}</p></div>
+            <div className="auth-heading"><p className="eyebrow">{signup ? 'VOTRE ESPACE TESCA' : 'GESTION DES INCIDENTS MATÉRIELS'}</p><h1>{signup ? 'Créer mon compte' : 'Content de vous revoir'}<span className="auth-title-dot">.</span></h1><p className="subtle">{signup ? 'Renseignez vos informations pour commencer.' : 'Connectez-vous pour signaler une panne ou suivre vos demandes IT.'}</p></div>
+            {!signup && <div className="auth-service-note"><span className="service-note-icon" aria-hidden="true">⌘</span><span><b>Un souci avec votre matériel&nbsp;?</b><small>PC · imprimante · réseau</small></span><span className="service-note-status"><i /> Support actif</span></div>}
             <form className="auth-form" onSubmit={submit}>
               {signup && <label className="field auth-field"><span className="field-label">Nom complet</span><span className="input-wrap"><span className="field-icon" aria-hidden="true">✳</span><input autoComplete="name" required value={name} onChange={(event) => setName(event.target.value)} placeholder="Ex. Amel Ben Salem" /></span></label>}
               <label className="field auth-field"><span className="field-label">Adresse e-mail</span><span className="input-wrap"><span className="field-icon" aria-hidden="true">@</span><input autoComplete="email" required type="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="nom@entreprise.com" /></span></label>
@@ -111,11 +183,12 @@ function Login() {
   )
 }
 
-function Portal({ user, tickets, setTickets, logout }) {
+function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout }) {
   return (
     <main className="app-shell">
-      <Header user={user} logout={logout} />
+      <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} />
       <div className="portal-content">
+        {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
         {user.role === 'employee'
           ? <Employee user={user} tickets={tickets} setTickets={setTickets} />
           : <Technician user={user} tickets={tickets} setTickets={setTickets} />}
@@ -124,15 +197,66 @@ function Portal({ user, tickets, setTickets, logout }) {
   )
 }
 
+function PushRegistration({ userId }) {
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return undefined
+    let active = true
+    const listeners = []
+    const setup = async () => {
+      try {
+        listeners.push(await PushNotifications.addListener('registration', async ({ value }) => {
+          if (!active || !value) return
+          const { error } = await supabase.from('push_tokens').upsert({
+            user_id: userId,
+            token: value,
+            platform: Capacitor.getPlatform(),
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id,token' })
+          if (error) console.error('Could not save push token:', error.message)
+        }))
+        listeners.push(await PushNotifications.addListener('registrationError', (error) => console.error('Push registration failed:', error)))
+        let permission = await PushNotifications.checkPermissions()
+        if (permission.receive === 'prompt') permission = await PushNotifications.requestPermissions()
+        if (!active || permission.receive !== 'granted') return
+        if (Capacitor.getPlatform() === 'android') {
+          await PushNotifications.createChannel({ id: 'incident-updates', name: 'Mises à jour des incidents', description: 'Nouvelles demandes et changements de statut', importance: 5, visibility: 1, vibration: true })
+        }
+        await PushNotifications.register()
+      } catch (error) {
+        console.error('Push notifications are not configured:', error)
+      }
+    }
+    void setup()
+    return () => {
+      active = false
+      listeners.forEach((listener) => { void listener.remove() })
+    }
+  }, [userId])
+  return null
+}
+
 function Employee({ user, tickets, setTickets }) {
   const [assetId, setAssetId] = useState(assets[0][0])
   const [issue, setIssue] = useState('')
   const [urgency, setUrgency] = useState('Normale')
   const [sent, setSent] = useState(false)
-  const submit = (event) => {
+  const [submitError, setSubmitError] = useState('')
+  const submit = async (event) => {
     event.preventDefault()
     if (!issue.trim()) return
-    setTickets((all) => [{ id: `INC-${1043 + all.length}`, assetId, reporter: user.name, issue, urgency, status: 'Ouvert', createdAt: "À l’instant", assignee: '', note: '' }, ...all])
+    setSubmitError('')
+    const { data, error } = await supabase.from('tickets').insert({
+      asset_id: assetId,
+      reporter_id: user.id,
+      issue: issue.trim(),
+      priority: urgency === 'Haute' ? 'high' : 'normal',
+      status: 'open',
+    }).select().single()
+    if (error) {
+      setSubmitError(error.message)
+      return
+    }
+    setTickets((all) => [mapTicket(data, { [user.id]: user.name }), ...all])
     setIssue('')
     setSent(true)
   }
@@ -143,6 +267,7 @@ function Employee({ user, tickets, setTickets }) {
     <section className="grid employee-grid">
       <form className="card form-card" onSubmit={submit}>
         <div className="card-heading"><span className="heading-icon">＋</span><div><p className="eyebrow">NOUVELLE DEMANDE</p><h2>Signaler un problème</h2></div></div>
+        {submitError && <p className="form-message" role="alert">{submitError}</p>}
         {sent && <Notice title="Demande envoyée" text="Un technicien sera prévenu. Vous pouvez suivre son avancement ici." />}
         <label className="field">Équipement concerné<select value={assetId} onChange={(event) => setAssetId(event.target.value)}>{assets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} — {asset[1]}</option>)}</select></label>
         <div className="preview"><span className="preview-icon">▣</span><div><b>{getAsset(assetId)[1]}</b><small>{getAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
@@ -157,15 +282,65 @@ function Employee({ user, tickets, setTickets }) {
         <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
       </section>
     </section>
+    <EmployeeHelpChat />
   </>
+}
+
+function EmployeeHelpChat() {
+  const [open, setOpen] = useState(false)
+  const [question, setQuestion] = useState('')
+  const [messages, setMessages] = useState([{ from: 'bot', text: 'Bonjour ! Je peux vous aider avec vos demandes informatiques. Que souhaitez-vous savoir ?' }])
+
+  const answerQuestion = (text) => {
+    const value = text.toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    if (/signal|declar|creer|ouvrir|report|panne|probleme/.test(value)) return 'Pour signaler un problème : choisissez l’équipement concerné, décrivez ce qui se passe, sélectionnez le niveau d’urgence puis appuyez sur « Envoyer la demande ». Votre signalement apparaîtra dans « Mes demandes ».'
+    if (/suivi|etat|statut|avancement|demande|ticket/.test(value)) return 'Retrouvez vos signalements dans la carte « Mes demandes ». Le statut indique si le problème est ouvert, en cours ou résolu.'
+    if (/urgent|urgence|priorite|grave/.test(value)) return 'Choisissez « Haute » si l’incident empêche un travail important ou touche plusieurs personnes. Sinon, sélectionnez « Normale ». En cas de danger électrique ou de fumée, éloignez-vous du matériel et prévenez directement votre équipe IT.'
+    if (/materiel|equipement|pc|ordinateur|imprimante|reseau|routeur/.test(value)) return 'Vous pouvez signaler un problème concernant un PC, une imprimante ou un équipement réseau. Choisissez l’équipement dans le formulaire pour que l’équipe IT sache où intervenir.'
+    if (/mot de passe|connexion|connecter|compte|acces|email|mail/.test(value)) return 'Vérifiez votre adresse e-mail et votre mot de passe. Si vous ne pouvez toujours pas accéder à votre compte, contactez directement l’équipe IT pour qu’elle vous aide.'
+    return 'Je peux répondre aux questions sur le signalement d’un problème, le suivi d’une demande, l’urgence et les équipements pris en charge. Pour une autre question, contactez votre équipe IT.'
+  }
+
+  const ask = (text) => {
+    const cleanText = text.trim()
+    if (!cleanText) return
+    setMessages((items) => [...items, { from: 'user', text: cleanText }, { from: 'bot', text: answerQuestion(cleanText) }])
+    setQuestion('')
+  }
+
+  return <aside className={`help-chat ${open ? 'help-chat-open' : ''}`} aria-label="Assistant informatique">
+    {open && <section className="help-chat-panel" aria-label="Discussion avec l’assistant">
+      <header className="help-chat-header"><span className="help-chat-avatar" aria-hidden="true">?</span><span><b>Assistant IT</b><small><i /> Aide aux employés</small></span><button type="button" className="help-chat-close" onClick={() => setOpen(false)} aria-label="Fermer l’assistant">×</button></header>
+      <div className="help-chat-messages" aria-live="polite">{messages.map((message, index) => <p key={`${index}-${message.from}`} className={`help-chat-message ${message.from}`}>{message.text}</p>)}</div>
+      {messages.length === 1 && <div className="help-chat-prompts"><button type="button" onClick={() => ask('Comment signaler un problème ?')}>Signaler un problème</button><button type="button" onClick={() => ask('Comment suivre ma demande ?')}>Suivre une demande</button><button type="button" onClick={() => ask('Quels équipements sont concernés ?')}>Équipements concernés</button></div>}
+      <form className="help-chat-form" onSubmit={(event) => { event.preventDefault(); ask(question) }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Écrivez votre question…" aria-label="Votre question" /><button type="submit" disabled={!question.trim()} aria-label="Envoyer la question">➤</button></form>
+    </section>}
+    <button type="button" className="help-chat-launcher" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label={open ? 'Fermer l’assistant informatique' : 'Ouvrir l’assistant informatique'}><span aria-hidden="true">{open ? '×' : '✦'}</span>{!open && <b>Besoin d’aide ?</b>}</button>
+  </aside>
 }
 
 function Technician({ user, tickets, setTickets }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [filter, setFilter] = useState('Tous')
+  const [updateError, setUpdateError] = useState('')
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   const shown = tickets.filter((ticket) => filter === 'Tous' || ticket.status === filter)
-  const update = (status, note) => setTickets((all) => all.map((ticket) => ticket.id === selected.id ? { ...ticket, status, note, assignee: status === 'Ouvert' ? '' : user.name } : ticket))
+  const update = async (status, note) => {
+    if (!selected) return
+    setUpdateError('')
+    const { data, error } = await supabase.from('tickets').update({
+      status: dbStatus[status],
+      technician_note: note,
+      technician_id: status === 'Ouvert' ? null : user.id,
+    }).eq('id', selected.dbId).select().single()
+    if (error) {
+      setUpdateError(error.message)
+      return
+    }
+    setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
+      ? mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name })
+      : ticket))
+  }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
 
   return <>
@@ -181,16 +356,17 @@ function Technician({ user, tickets, setTickets }) {
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail ticket={selected} update={update} />}
+      {selected && <Detail ticket={selected} update={update} updateError={updateError} />}
     </section>
   </>
 }
 
-function Detail({ ticket, update }) {
+function Detail({ ticket, update, updateError }) {
   const [note, setNote] = useState(ticket.note)
   useEffect(() => setNote(ticket.note), [ticket.id, ticket.note])
   const asset = getAsset(ticket.assetId)
   return <section className="card detail-card">
+    {updateError && <p className="form-message" role="alert">{updateError}</p>}
     <div className="detail-head"><div><p className="eyebrow">FICHE D’INTERVENTION <span className="reference">{ticket.id}</span></p><h2>{asset[1]}</h2><p className="subtle small">{asset[0]} <span>·</span> {asset[3]}</p></div><Status status={ticket.status} /></div>
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
@@ -221,6 +397,27 @@ function Brand({ light = false }) {
   return <div className={`brand ${light ? 'brand-light' : ''}`}><span className="brand-mark">t</span><span className="brand-word">tesca<span>.tech</span></span></div>
 }
 
-function Header({ user, logout }) {
-  return <header className="app-header"><Brand /><div className="header-user"><div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : 'Technicien'}</b></div><button className="avatar" onClick={logout} title="Se déconnecter" aria-label="Se déconnecter">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button><button className="logout-button" onClick={logout}>Quitter <span aria-hidden="true">↗</span></button></div></header>
+function Header({ user, logout, notifications, setNotifications }) {
+  const [open, setOpen] = useState(false)
+  const unread = notifications.filter((item) => !item.read).length
+  const markRead = (id) => setNotifications((items) => items.map((item) => item.id === id ? { ...item, read: true } : item))
+  return (
+    <header className="app-header">
+      <Brand />
+      <div className="header-user">
+        <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : 'Technicien'}</b></div>
+        <div className="notification-wrap">
+          <button className="notification-button" onClick={() => setOpen(!open)} aria-label={`Notifications${unread ? `, ${unread} non lues` : ''}`} aria-expanded={open}>
+            <span aria-hidden="true">🔔</span>{unread > 0 && <i>{unread > 9 ? '9+' : unread}</i>}
+          </button>
+          {open && <section className="notification-panel">
+            <div className="notification-panel-head"><b>Notifications</b><button onClick={() => setNotifications([])}>Effacer</button></div>
+            {notifications.length ? <div className="notification-items">{notifications.map((item) => <button className={`notification-item${item.read ? '' : ' unread'}`} key={item.id} onClick={() => markRead(item.id)}><span className="notification-dot" /><span><b>{item.title}</b><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</time></span></button>)}</div> : <p className="notification-empty">Aucune notification pour le moment.</p>}
+          </section>}
+        </div>
+        <button className="avatar" onClick={logout} title="Se déconnecter" aria-label="Se déconnecter">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button>
+        <button className="logout-button" onClick={logout}>Quitter <span aria-hidden="true">↗</span></button>
+      </div>
+    </header>
+  )
 }

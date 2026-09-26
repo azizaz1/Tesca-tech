@@ -3,6 +3,7 @@ dist/
 .env
 .env.*
 !.env.example
+firebase-service-account.json
 commandlinetools-extract/
 commandlinetools-win.zip
 android/.gradle/

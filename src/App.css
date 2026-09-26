@@ -29,3 +29,75 @@
   .form-message{border-radius:10px;font-size:11px}.auth-switch{justify-content:center;gap:4px;margin-top:23px;padding:15px 10px;border:1px solid #ebe8e1;border-radius:11px;background:rgba(255,255,255,.58);font-size:10px}.auth-switch .text-button{font-size:10px}.auth-legal{display:none}.auth-mobile-foot{display:flex;align-items:center;gap:7px;max-width:430px;width:100%;margin:auto auto 0;padding-top:22px;color:#8c928d;font-size:9px}.mobile-foot-pulse{width:6px;height:6px;border-radius:50%;background:#76ad8a;box-shadow:0 0 0 3px rgba(118,173,138,.14)}.mobile-foot-brand{margin-left:auto;color:#a9aaa2;font-size:7px;font-weight:800;letter-spacing:1.2px}
 }
 @media(max-width:360px){.auth-panel{padding-left:19px;padding-right:19px}.auth-content{padding-top:30px}.auth-heading h1{font-size:29px}.mobile-secure{padding:6px 7px;font-size:6px}}
+
+/* Equipment support sign-in polish */
+.auth-page{background:radial-gradient(ellipse at 12% 10%,#fff 0,transparent 38%),#edf1ef}
+.auth-layout{border:1px solid rgba(33,53,58,.06);border-radius:26px;box-shadow:0 34px 90px rgba(31,47,51,.14)}
+.auth-showcase:before{background:radial-gradient(ellipse at 12% 90%,rgba(230,94,74,.26),transparent 43%),radial-gradient(ellipse at 90% 12%,rgba(93,150,137,.2),transparent 38%),linear-gradient(145deg,#1d3439,#111d24 76%)}
+.showcase-kicker{color:#f1a184}
+.auth-service-note{display:flex;align-items:center;gap:12px;margin:-14px 0 24px;padding:13px 14px;border:1px solid #e9ece7;border-radius:13px;background:linear-gradient(110deg,#f8faf7,#fff);box-shadow:0 5px 16px rgba(32,49,50,.035)}
+.service-note-icon{display:grid;place-items:center;flex:0 0 35px;width:35px;height:35px;border-radius:11px;background:#eaf2ec;color:#4d8065;font-size:19px}
+.auth-service-note>span:nth-child(2){display:flex;flex-direction:column;gap:3px;min-width:0}
+.auth-service-note b{color:#354348;font-size:10px;font-weight:750}
+.auth-service-note small{color:#919994;font-size:9px}
+.service-note-status{display:flex;align-items:center;gap:5px;margin-left:auto;color:#66836f;font-size:8px;font-weight:700;white-space:nowrap}
+.service-note-status i{width:6px;height:6px;border-radius:50%;background:#79b18b;box-shadow:0 0 0 3px #e8f2e9}
+.auth-form .primary-action{background:linear-gradient(105deg,#203a40,#29474a);box-shadow:0 9px 20px rgba(31,58,63,.16)}
+.auth-form .primary-action:hover{background:linear-gradient(105deg,#29474a,#33585a)}
+@media(max-width:680px){
+  .auth-page{background:radial-gradient(ellipse at 90% 0%,#fff 0,transparent 34%),#f3f5f1}
+  .auth-layout{border:0;border-radius:0;background:transparent}
+  .auth-panel{background:transparent}
+  .auth-content{padding-top:30px}
+  .auth-heading{margin-bottom:22px}
+  .auth-heading h1{letter-spacing:-1.25px}
+  .auth-service-note{margin:-8px 0 23px;padding:11px 12px;border-color:#e6eae3;background:rgba(255,255,255,.78)}
+  .service-note-icon{flex-basis:33px;width:33px;height:33px}
+  .auth-form .primary-action{background:linear-gradient(105deg,#203a40,#29474a)}
+}
+
+/* Employee self-service help chatbot */
+.help-chat{position:fixed;z-index:20;right:24px;bottom:24px;display:flex;flex-direction:column;align-items:flex-end;gap:12px;font-family:inherit}
+.help-chat-launcher{display:flex;align-items:center;gap:9px;min-height:50px;padding:0 17px 0 12px;border:0;border-radius:26px;background:#203a40;color:#fff;box-shadow:0 8px 24px rgba(27,51,55,.24);font-size:11px;font-weight:750;transition:transform .18s,background .18s}
+.help-chat-launcher:hover{transform:translateY(-2px);background:#2d5053}
+.help-chat-launcher>span{display:grid;place-items:center;width:29px;height:29px;border-radius:50%;background:rgba(255,255,255,.14);font-size:17px}
+.help-chat-panel{display:flex;flex-direction:column;width:min(360px,calc(100vw - 32px));height:min(490px,calc(100dvh - 110px));min-height:340px;overflow:hidden;border:1px solid #e6eae5;border-radius:17px;background:#fff;box-shadow:0 18px 56px rgba(26,43,46,.2);animation:chat-rise .18s ease-out}
+@keyframes chat-rise{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.help-chat-header{display:flex;align-items:center;gap:10px;padding:15px 16px;background:#203a40;color:#fff}
+.help-chat-avatar{display:grid;place-items:center;width:35px;height:35px;border:1px solid rgba(255,255,255,.22);border-radius:12px;background:rgba(255,255,255,.12);font-weight:800}
+.help-chat-header>span:nth-child(2){display:flex;flex-direction:column;gap:4px}.help-chat-header b{font-size:12px}.help-chat-header small{display:flex;align-items:center;gap:6px;color:rgba(255,255,255,.68);font-size:9px}.help-chat-header small i{width:6px;height:6px;border-radius:50%;background:#86d2a1}
+.help-chat-close{margin-left:auto;border:0;background:transparent;color:#fff;font-size:23px;line-height:1;padding:4px 6px}
+.help-chat-messages{display:flex;flex:1;flex-direction:column;gap:10px;overflow:auto;padding:16px 13px 8px;background:#f7f8f5;scrollbar-width:thin}
+.help-chat-message{max-width:90%;padding:10px 12px;border-radius:13px;font-size:11px;line-height:1.55;white-space:pre-wrap}
+.help-chat-message.bot{align-self:flex-start;border:1px solid #e9ece7;border-bottom-left-radius:4px;background:#fff;color:#45524f}
+.help-chat-message.user{align-self:flex-end;border-bottom-right-radius:4px;background:#e8f0eb;color:#344b43}
+.help-chat-prompts{display:flex;flex-wrap:wrap;gap:6px;padding:8px 12px;background:#f7f8f5}
+.help-chat-prompts button{border:1px solid #dce7df;border-radius:15px;background:#fff;color:#4d7560;padding:7px 9px;font-size:9px}
+.help-chat-prompts button:hover{background:#eff6f0}
+.help-chat-form{display:flex;align-items:center;gap:8px;padding:11px;border-top:1px solid #eceee9;background:#fff}
+.help-chat-form input{flex:1;min-width:0;height:40px;border:1px solid #e5e8e2;border-radius:11px;padding:0 12px;background:#fafbf9;color:#354348;font-size:12px}
+.help-chat-form input:focus{outline:2px solid rgba(77,128,101,.2);border-color:#9ab7a2}
+.help-chat-form input::placeholder{color:#a0a7a1;font-size:10px}
+.help-chat-form button{display:grid;place-items:center;flex:0 0 39px;height:39px;border:0;border-radius:11px;background:#203a40;color:#fff;font-size:15px}
+.help-chat-form button:disabled{cursor:default;opacity:.4}
+@media(max-width:680px){.help-chat{right:15px;bottom:max(15px,env(safe-area-inset-bottom))}.help-chat-panel{width:min(360px,calc(100vw - 30px));height:min(470px,calc(100dvh - 95px))}.help-chat-launcher{min-height:47px}}
+
+.notification-wrap{position:relative}
+.notification-button{position:relative;display:grid;place-items:center;width:38px;height:38px;border:1px solid #e7e6e1;border-radius:12px;background:#fff;color:#33454a;font-size:19px}
+.notification-button:hover{background:#f7f7f3}
+.notification-button i{position:absolute;right:-5px;top:-5px;min-width:17px;height:17px;padding:0 4px;display:grid;place-items:center;border:2px solid #fff;border-radius:10px;background:#d96150;color:#fff;font-size:9px;font-style:normal;font-weight:800}
+.notification-panel{position:absolute;z-index:20;right:0;top:47px;width:min(340px,calc(100vw - 36px));max-height:min(430px,70vh);overflow:hidden;border:1px solid #e6e7e1;border-radius:13px;background:#fff;box-shadow:0 16px 45px rgba(28,43,45,.16)}
+.notification-panel-head{display:flex;align-items:center;justify-content:space-between;padding:14px 15px;border-bottom:1px solid #eff0ec}
+.notification-panel-head b{color:#283a40;font-size:13px}
+.notification-panel-head button{border:0;background:transparent;color:#a55e50;font-size:10px}
+.notification-items{max-height:360px;overflow:auto}
+.notification-item{width:100%;display:flex;gap:10px;padding:12px 14px;border:0;border-bottom:1px solid #f0f1ed;background:#fff;text-align:left}
+.notification-item.unread{background:#fbf8f4}
+.notification-dot{flex:0 0 8px;width:8px;height:8px;margin-top:4px;border-radius:50%;background:transparent}
+.notification-item.unread .notification-dot{background:#dc6855}
+.notification-item>span:last-child{min-width:0;display:flex;flex-direction:column;gap:4px}
+.notification-item b{color:#34434a;font-size:10px}
+.notification-item small{color:#747f7d;font-size:10px;line-height:1.45}
+.notification-item time{color:#a0a6a1;font-size:8px}
+.notification-empty{padding:22px 15px;color:#929a95;font-size:10px;text-align:center}
+@media(max-width:680px){.notification-button{width:34px;height:34px;border-radius:11px}.notification-panel{position:fixed;top:72px;right:12px;width:min(360px,calc(100vw - 24px));max-height:calc(100dvh - 95px)}.notification-items{max-height:calc(100dvh - 155px)}}

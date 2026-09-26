@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "890052858670",
+    "project_id": "setcar-tech",
+    "storage_bucket": "setcar-tech.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:890052858670:android:bc3f997fb44a50369ca0bf",
+        "android_client_info": {
+          "package_name": "com.setcar.tech"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCxpNGdA5q9h9__cBwGdtRuly3tcKORp8M"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
