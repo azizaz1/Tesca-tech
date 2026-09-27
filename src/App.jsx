@@ -14,6 +14,19 @@ const assets = [
 ]
 
 const getAsset = (id) => assets.find((asset) => asset[0] === id) || assets[0]
+const repairPlaybooks = [
+  { id: 'network-connectivity', title: 'Connexion réseau', steps: ['Vérifier le Wi-Fi ou le câble réseau', 'Confirmer si d’autres appareils sont touchés', 'Désactiver puis réactiver la connexion réseau', 'Tester l’accès à la passerelle et à un site web', 'Noter le message d’erreur ou le résultat'] },
+  { id: 'printer', title: 'Imprimante', steps: ['Vérifier l’alimentation et les voyants', 'Contrôler le papier et les consommables', 'Vérifier l’écran et noter tout code erreur', 'Vider puis relancer la file d’impression', 'Imprimer une page de test'] },
+  { id: 'workstation', title: 'Poste de travail', steps: ['Vérifier alimentation, câbles et périphériques', 'Redémarrer le poste et reproduire le problème', 'Contrôler l’espace disque et les mises à jour', 'Vérifier si le problème touche une application précise', 'Noter le message d’erreur et l’heure du problème'] },
+  { id: 'general-it', title: 'Diagnostic informatique général', steps: ['Reproduire le problème et noter les étapes', 'Vérifier les branchements et l’alimentation', 'Redémarrer l’équipement si possible', 'Vérifier si d’autres utilisateurs sont concernés', 'Ajouter les résultats et les messages d’erreur'] },
+]
+const suggestPlaybook = (ticket) => {
+  const text = `${ticket.assetId} ${ticket.issue}`.toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  if (/imp|imprim|papier|impression|toner/.test(text)) return 'printer'
+  if (/net|wifi|wi-fi|internet|reseau|connexion/.test(text)) return 'network-connectivity'
+  if (/pc|poste|ordinateur|lent|demarr|ecran|clavier/.test(text)) return 'workstation'
+  return 'general-it'
+}
 const statusLabels = { open: 'Ouvert', assigned: 'Attribué', in_progress: 'En cours', waiting_parts: 'En attente de pièces', resolved: 'Résolu', closed: 'Clôturé', reopened: 'Réouvert' }
 const dbStatus = { Ouvert: 'open', Attribué: 'assigned', 'En cours': 'in_progress', 'En attente de pièces': 'waiting_parts', Résolu: 'resolved', Clôturé: 'closed', Réouvert: 'reopened' }
 
@@ -31,6 +44,7 @@ const mapTicket = (row, profiles = {}) => ({
   level: row.technician_level || 1,
   attachments: row.attachments || [],
   escalations: row.escalations || [],
+  playbook: row.playbook || null,
 })
 
 const readTickets = async (role) => {
@@ -46,6 +60,8 @@ const readTickets = async (role) => {
   if (filesError) throw filesError
   const { data: events, error: eventError } = await supabase.from('ticket_escalations').select('*').in('ticket_id', rows.map((row) => row.id)).order('created_at', { ascending: true })
   if (eventError) throw eventError
+  const { data: playbookRows, error: playbookError } = await supabase.from('ticket_playbook_progress').select('*').in('ticket_id', rows.map((row) => row.id))
+  if (playbookError) throw playbookError
   const userIds = [...new Set([...rows.flatMap((row) => [row.reporter_id, row.technician_id]), ...(events || []).map((event) => event.technician_id)].filter(Boolean))]
   const { data: people } = await supabase.from('profiles').select('id, full_name').in('id', userIds)
   const names = Object.fromEntries((people || []).map((person) => [person.id, person.full_name]))
@@ -68,7 +84,13 @@ const readTickets = async (role) => {
       createdAt: new Date(event.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
     })
   })
-  return rows.map((row) => mapTicket({ ...row, attachments: attachmentsByTicket[row.id] || [], escalations: escalationsByTicket[row.id] || [] }, names))
+  const playbooksByTicket = Object.fromEntries((playbookRows || []).map((row) => [row.ticket_id, {
+    playbookId: row.playbook_id,
+    checkedSteps: row.checked_steps || [],
+    note: row.technician_note || '',
+    updatedAt: row.updated_at,
+  }]))
+  return rows.map((row) => mapTicket({ ...row, attachments: attachmentsByTicket[row.id] || [], escalations: escalationsByTicket[row.id] || [], playbook: playbooksByTicket[row.id] || null }, names))
 }
 
 export default function App() {
@@ -395,7 +417,7 @@ function Technician({ user, tickets, setTickets }) {
       return
     }
     setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
-      ? mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name })
+      ? { ...mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name }), attachments: selected.attachments, escalations: selected.escalations, playbook: selected.playbook }
       : ticket))
   }
   const escalate = async (note) => {
@@ -420,8 +442,22 @@ function Technician({ user, tickets, setTickets }) {
       createdAt: new Date(event.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
     }
     setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
-      ? { ...mapTicket(ticketRow, { [ticketRow.reporter_id]: selected.reporter }), attachments: selected.attachments, escalations: [...(selected.escalations || []), escalation] }
+      ? { ...mapTicket(ticketRow, { [ticketRow.reporter_id]: selected.reporter }), attachments: selected.attachments, escalations: [...(selected.escalations || []), escalation], playbook: selected.playbook }
       : ticket))
+  }
+  const savePlaybook = async (ticket, progress) => {
+    const { data, error } = await supabase.from('ticket_playbook_progress').upsert({
+      ticket_id: ticket.dbId,
+      playbook_id: progress.playbookId,
+      checked_steps: progress.checkedSteps,
+      technician_note: progress.note,
+      technician_id: user.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'ticket_id' }).select().single()
+    if (error) return { ok: false, error: error.message }
+    const saved = { playbookId: data.playbook_id, checkedSteps: data.checked_steps || [], note: data.technician_note || '', updatedAt: data.updated_at }
+    setTickets((all) => all.map((item) => item.dbId === ticket.dbId ? { ...item, playbook: saved } : item))
+    return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
 
@@ -438,14 +474,33 @@ function Technician({ user, tickets, setTickets }) {
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail ticket={selected} update={update} escalate={escalate} updateError={updateError} />}
+      {selected && <Detail ticket={selected} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
     </section>
   </>
 }
 
-function Detail({ ticket, update, escalate, updateError }) {
+function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
   const [note, setNote] = useState(ticket.note)
+  const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
+  const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
+  const [playbookNote, setPlaybookNote] = useState(ticket.playbook?.note || '')
+  const [playbookSaving, setPlaybookSaving] = useState(false)
+  const [playbookMessage, setPlaybookMessage] = useState('')
   useEffect(() => setNote(ticket.note), [ticket.id, ticket.note])
+  useEffect(() => {
+    setPlaybookId(ticket.playbook?.playbookId || suggestPlaybook(ticket))
+    setCheckedSteps(ticket.playbook?.checkedSteps || [])
+    setPlaybookNote(ticket.playbook?.note || '')
+    setPlaybookMessage('')
+  }, [ticket.id, ticket.playbook?.updatedAt])
+  const activePlaybook = repairPlaybooks.find((item) => item.id === playbookId) || repairPlaybooks[0]
+  const saveCurrentPlaybook = async () => {
+    setPlaybookSaving(true)
+    setPlaybookMessage('')
+    const result = await savePlaybook(ticket, { playbookId, checkedSteps, note: playbookNote })
+    setPlaybookSaving(false)
+    setPlaybookMessage(result.ok ? 'Diagnostic enregistré pour cette demande.' : result.error)
+  }
   const asset = getAsset(ticket.assetId)
   return <section className="card detail-card">
     {updateError && <p className="form-message" role="alert">{updateError}</p>}
@@ -453,6 +508,14 @@ function Detail({ ticket, update, escalate, updateError }) {
     <div className="alert"><span className="alert-symbol">{ticket.level}</span><div><strong>Technicien niveau {ticket.level}</strong><p>{ticket.level < 3 ? `Si le problème n’est pas résolu, escaladez au niveau ${ticket.level + 1}.` : 'Niveau maximum atteint.'}</p></div></div>
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
+    <section className="repair-playbook">
+      <div className="playbook-heading"><div><p className="eyebrow">GUIDE DE DIAGNOSTIC</p><h3>Playbook de réparation</h3></div><span className="playbook-count">{checkedSteps.length}/{activePlaybook.steps.length}</span></div>
+      <label className="field playbook-select">Choisir un guide<select value={playbookId} onChange={(event) => { setPlaybookId(event.target.value); setCheckedSteps([]); setPlaybookMessage('') }}>{repairPlaybooks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
+      <div className="playbook-progress"><span style={{ width: `${(checkedSteps.length / activePlaybook.steps.length) * 100}%` }} /></div>
+      <div className="playbook-steps">{activePlaybook.steps.map((step, index) => <label className={`playbook-step ${checkedSteps.includes(index) ? 'checked' : ''}`} key={step}><input type="checkbox" checked={checkedSteps.includes(index)} onChange={() => { setCheckedSteps((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index]); setPlaybookMessage('') }} /><span className="playbook-check" aria-hidden="true">✓</span><span>{step}</span></label>)}</div>
+      <label className="field playbook-note">Résultat du diagnostic<textarea value={playbookNote} onChange={(event) => { setPlaybookNote(event.target.value); setPlaybookMessage('') }} placeholder="Résultats, messages d’erreur, actions effectuées…" /></label>
+      <div className="playbook-footer"><button type="button" className="playbook-save" onClick={saveCurrentPlaybook} disabled={playbookSaving}>{playbookSaving ? 'Enregistrement…' : 'Enregistrer le diagnostic'}</button>{playbookMessage && <small className={playbookMessage.startsWith('Diagnostic enregistré') ? 'playbook-success' : 'playbook-error'} role="status">{playbookMessage}</small>}</div>
+    </section>
     <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>

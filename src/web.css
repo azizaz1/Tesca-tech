@@ -353,6 +353,32 @@ html:has(.web-experience) {
   border-radius: 12px;
 }
 
+.web-experience .repair-playbook {
+  border-color: #e1e9e5;
+  border-radius: 14px;
+  padding: 18px;
+  background: linear-gradient(145deg, #fbfdfb, #f7faf8);
+}
+
+.web-experience .playbook-heading h3 {
+  color: #2a4145;
+  font-size: 15px;
+}
+
+.web-experience .playbook-step {
+  min-height: 38px;
+  align-items: center;
+  padding: 9px;
+  font-size: 11px;
+}
+
+.web-experience .playbook-save {
+  min-height: 40px;
+  border-radius: 9px;
+  padding: 0 14px;
+  font-size: 11px;
+}
+
 .web-experience .ticket-list {
   max-height: 720px;
   overflow-y: auto;
