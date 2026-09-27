@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react'
+import { Capacitor } from '@capacitor/core'
+import { PushNotifications } from '@capacitor/push-notifications'
 import './App.css'
 import { supabase } from './supabase'
 import tescaLogo from './assets/tesca-tescagroup-logo.jpg'
@@ -25,6 +27,8 @@ const mapTicket = (row, profiles = {}) => ({
   createdAt: new Date(row.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
   assignee: profiles[row.technician_id] || '',
   note: row.technician_note || '',
+  level: row.technician_level || 1,
+  attachments: row.attachments || [],
 })
 
 const readTickets = async (role) => {
@@ -39,7 +43,17 @@ const readTickets = async (role) => {
   const userIds = [...new Set(rows.flatMap((row) => [row.reporter_id, row.technician_id].filter(Boolean)))]
   const { data: people } = await supabase.from('profiles').select('id, full_name').in('id', userIds)
   const names = Object.fromEntries((people || []).map((person) => [person.id, person.full_name]))
-  return rows.map((row) => mapTicket(row, names))
+  const { data: files, error: filesError } = await supabase.from('ticket_attachments').select('*').in('ticket_id', rows.map((row) => row.id))
+  if (filesError) throw filesError
+  const attachmentsByTicket = {}
+  await Promise.all((files || []).map(async (file) => {
+    const { data, error: urlError } = await supabase.storage.from('ticket-attachments').createSignedUrl(file.storage_path, 3600)
+    if (!urlError && data?.signedUrl) {
+      attachmentsByTicket[file.ticket_id] ||= []
+      attachmentsByTicket[file.ticket_id].push({ name: file.file_name, mimeType: file.mime_type, url: data.signedUrl })
+    }
+  }))
+  return rows.map((row) => mapTicket({ ...row, attachments: attachmentsByTicket[row.id] || [] }, names))
 }
 
 export default function App() {
@@ -186,6 +200,7 @@ function Login() {
 function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout }) {
   return (
     <main className="app-shell">
+      <PushRegistration userId={user.id} />
       <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} />
       <div className="portal-content">
         {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
@@ -239,6 +254,7 @@ function Employee({ user, tickets, setTickets }) {
   const [assetId, setAssetId] = useState(assets[0][0])
   const [issue, setIssue] = useState('')
   const [urgency, setUrgency] = useState('Normale')
+  const [files, setFiles] = useState([])
   const [sent, setSent] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const submit = async (event) => {
@@ -256,8 +272,24 @@ function Employee({ user, tickets, setTickets }) {
       setSubmitError(error.message)
       return
     }
-    setTickets((all) => [mapTicket(data, { [user.id]: user.name }), ...all])
+    let fileError = ''
+    for (const file of files) {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = `${data.id}/${crypto.randomUUID()}-${safeName}`
+      const { error: uploadError } = await supabase.storage.from('ticket-attachments').upload(path, file, { contentType: file.type, upsert: false })
+      if (uploadError) { fileError = `L’incident est créé, mais l’envoi de ${file.name} a échoué : ${uploadError.message}`; break }
+      const { error: metadataError } = await supabase.from('ticket_attachments').insert({ ticket_id: data.id, storage_path: path, file_name: file.name, mime_type: file.type })
+      if (metadataError) { fileError = `L’incident est créé, mais l’enregistrement de ${file.name} a échoué : ${metadataError.message}`; break }
+    }
+    if (fileError) setSubmitError(fileError)
+    const { data: savedFiles } = await supabase.from('ticket_attachments').select('*').eq('ticket_id', data.id)
+    const attachments = await Promise.all((savedFiles || []).map(async (file) => {
+      const { data: signed } = await supabase.storage.from('ticket-attachments').createSignedUrl(file.storage_path, 3600)
+      return signed?.signedUrl ? { name: file.file_name, mimeType: file.mime_type, url: signed.signedUrl } : null
+    }))
+    setTickets((all) => [mapTicket({ ...data, attachments: attachments.filter(Boolean) }, { [user.id]: user.name }), ...all])
     setIssue('')
+    setFiles([])
     setSent(true)
   }
   const mine = tickets.filter((ticket) => ticket.reporter === user.name)
@@ -272,6 +304,15 @@ function Employee({ user, tickets, setTickets }) {
         <label className="field">Équipement concerné<select value={assetId} onChange={(event) => setAssetId(event.target.value)}>{assets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} — {asset[1]}</option>)}</select></label>
         <div className="preview"><span className="preview-icon">▣</span><div><b>{getAsset(assetId)[1]}</b><small>{getAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
         <label className="field">Décrivez le problème<textarea required value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /></label>
+        <label className="field">Photos ou pièces jointes<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple onChange={(event) => {
+          const selected = Array.from(event.target.files || [])
+          if (selected.length > 5) { setSubmitError('Vous pouvez joindre jusqu’à 5 fichiers.'); event.target.value = ''; return }
+          const oversized = selected.find((file) => file.size > 10 * 1024 * 1024)
+          if (oversized) { setSubmitError(`${oversized.name} dépasse la limite de 10 Mo.`); event.target.value = ''; return }
+          setSubmitError('')
+          setFiles(selected)
+        }} /><small className="upload-help">Jusqu’à 5 photos ou PDF, 10 Mo maximum par fichier.</small></label>
+        {files.length > 0 && <ul className="selected-files">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}</li>)}</ul>}
         <label className="field">Niveau d’urgence<select value={urgency} onChange={(event) => setUrgency(event.target.value)}><option>Normale</option><option>Haute</option></select></label>
         <button className="primary-action">Envoyer la demande <span aria-hidden="true">↗</span></button>
         <p className="form-caption"><span className="lock-icon">◈</span> Votre demande sera transmise uniquement à l’équipe IT.</p>
@@ -325,12 +366,13 @@ function Technician({ user, tickets, setTickets }) {
   const [updateError, setUpdateError] = useState('')
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   const shown = tickets.filter((ticket) => filter === 'Tous' || ticket.status === filter)
-  const update = async (status, note) => {
+  const update = async (status, note, level = selected?.level || 1) => {
     if (!selected) return
     setUpdateError('')
     const { data, error } = await supabase.from('tickets').update({
       status: dbStatus[status],
       technician_note: note,
+      technician_level: level,
       technician_id: status === 'Ouvert' ? null : user.id,
     }).eq('id', selected.dbId).select().single()
     if (error) {
@@ -368,17 +410,23 @@ function Detail({ ticket, update, updateError }) {
   return <section className="card detail-card">
     {updateError && <p className="form-message" role="alert">{updateError}</p>}
     <div className="detail-head"><div><p className="eyebrow">FICHE D’INTERVENTION <span className="reference">{ticket.id}</span></p><h2>{asset[1]}</h2><p className="subtle small">{asset[0]} <span>·</span> {asset[3]}</p></div><Status status={ticket.status} /></div>
+    <div className="alert"><span className="alert-symbol">{ticket.level}</span><div><strong>Technicien niveau {ticket.level}</strong><p>{ticket.level < 3 ? `Si le problème n’est pas résolu, escaladez au niveau ${ticket.level + 1}.` : 'Niveau maximum atteint.'}</p></div></div>
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
+    {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
     {ticket.status === 'Résolu'
       ? <Notice title="Intervention clôturée" text={ticket.note || 'Aucun compte rendu ajouté.'} />
-      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => update(ticket.status === 'Ouvert' ? 'En cours' : 'Résolu', note)}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Clôturer l’intervention'} <span aria-hidden="true">↗</span></button></>}
+      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => update(ticket.status === 'Ouvert' ? 'En cours' : 'Résolu', note)}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => update('Ouvert', note, ticket.level + 1)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
   </section>
 }
 
 function Ticket({ ticket }) {
-  return <article className="ticket employee-ticket"><div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div><p>{ticket.issue}</p><small className="ticket-meta">{ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small></article>
+  return <article className="ticket employee-ticket"><div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div><p>{ticket.issue}</p>{ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}<small className="ticket-meta">Niveau {ticket.level} · {ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small></article>
+}
+
+function AttachmentList({ attachments }) {
+  return <section className="attachments"><p className="eyebrow">PHOTOS ET PIÈCES JOINTES</p><div className="attachment-list">{attachments.map((file) => <a className="attachment-item" href={file.url} target="_blank" rel="noreferrer" key={`${file.name}-${file.url}`}>{file.mimeType?.startsWith('image/') ? <img src={file.url} alt={file.name} /> : <span className="attachment-file-icon">PDF</span>}<span>{file.name}</span></a>)}</div></section>
 }
 
 function Status({ status }) {
