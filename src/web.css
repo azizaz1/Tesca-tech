@@ -1,0 +1,443 @@
+/* Browser-only workspace refresh. Native Capacitor screens keep App.css unchanged. */
+body:has(.web-experience),
+html:has(.web-experience) {
+  background: #f3f6f8;
+}
+
+.web-experience {
+  width: 100%;
+  max-width: none;
+  min-height: 100vh;
+  padding: 0 clamp(22px, 5.2vw, 84px) 72px;
+  background:
+    radial-gradient(ellipse at 8% 18%, rgba(222, 231, 234, .45), transparent 30%),
+    #f3f6f8;
+  color: #1f3038;
+}
+
+.web-experience .app-header {
+  position: relative;
+  z-index: 5;
+  max-width: 1370px;
+  height: 84px;
+  margin: 0 auto;
+  border-bottom: 1px solid #e0e7e9;
+}
+
+.web-experience .brand-mark {
+  width: 39px;
+  height: 39px;
+  border-radius: 13px 13px 13px 5px;
+  box-shadow: 0 7px 15px rgba(223, 96, 79, .18);
+}
+
+.web-experience .brand-word {
+  font-size: 20px;
+}
+
+.web-experience .header-user-copy small {
+  color: #8b999e;
+  font-size: 9px;
+}
+
+.web-experience .header-user-copy b {
+  color: #2c3d44;
+  font-size: 13px;
+}
+
+.web-experience .avatar {
+  width: 41px;
+  height: 41px;
+  border-radius: 14px;
+  background: #233a43;
+  box-shadow: 0 5px 12px rgba(31, 48, 56, .12);
+}
+
+.web-experience .portal-content {
+  max-width: 1250px;
+  margin: 0 auto;
+  padding-top: 30px;
+}
+
+.web-experience .welcome {
+  min-height: 208px;
+  margin: 0 0 25px;
+  padding: 39px 44px;
+  border: 0;
+  border-radius: 22px;
+  background:
+    radial-gradient(circle at 84% 12%, rgba(255, 255, 255, .14), transparent 24%),
+    linear-gradient(112deg, #203740 0%, #29474d 60%, #31555a 100%);
+  box-shadow: 0 18px 42px rgba(30, 54, 62, .13);
+}
+
+.web-experience .welcome .eyebrow {
+  color: #c1d2cd;
+  font-size: 9px;
+  letter-spacing: 1.8px;
+}
+
+.web-experience .welcome h1 {
+  color: #fff;
+  font-size: clamp(34px, 3.4vw, 44px);
+  letter-spacing: -1.7px;
+}
+
+.web-experience .hello-dot {
+  color: #f3a27e;
+}
+
+.web-experience .welcome .subtle {
+  color: #c3d0cf;
+  font-size: 13px;
+}
+
+.web-experience .welcome-art {
+  right: 42px;
+  width: 270px;
+  color: #f0a17d;
+}
+
+.web-experience .welcome-art:before,
+.web-experience .welcome-art:after {
+  border-color: rgba(255, 255, 255, .15);
+}
+
+.web-experience .welcome-art-orb {
+  width: 76px;
+  height: 76px;
+  background: linear-gradient(145deg, #f0a17d, #dc715d);
+  box-shadow: 0 14px 34px rgba(9, 23, 28, .25);
+}
+
+.web-experience .welcome-art-line {
+  background: rgba(255, 255, 255, .18);
+}
+
+.web-experience .welcome-art small {
+  color: #bed0cc;
+}
+
+.web-experience .grid {
+  gap: 20px;
+}
+
+.web-experience .employee-grid {
+  grid-template-columns: minmax(0, 1.04fr) minmax(340px, .96fr);
+}
+
+.web-experience .technician-grid {
+  grid-template-columns: minmax(350px, .83fr) minmax(0, 1.17fr);
+  gap: 20px;
+}
+
+.web-experience .card {
+  border: 1px solid #e3e9eb;
+  border-radius: 17px;
+  padding: 26px 27px;
+  background: rgba(255, 255, 255, .94);
+  box-shadow: 0 9px 26px rgba(31, 48, 56, .045);
+}
+
+.web-experience .card-heading {
+  margin-bottom: 20px;
+}
+
+.web-experience .heading-icon {
+  width: 39px;
+  height: 39px;
+  flex-basis: 39px;
+  border-radius: 13px;
+  background: #263f47;
+  box-shadow: 0 6px 12px rgba(38, 63, 71, .12);
+}
+
+.web-experience .heading-icon-soft {
+  color: #bf604f;
+  background: #fff0eb;
+  box-shadow: none;
+}
+
+.web-experience .card h2 {
+  color: #263940;
+  font-size: 20px;
+  letter-spacing: -.45px;
+}
+
+.web-experience .card-intro {
+  margin-top: -10px;
+  color: #7d8b8e;
+  font-size: 12px;
+}
+
+.web-experience .form-card .field,
+.web-experience .detail-card .field {
+  margin: 18px 0;
+  color: #45575b;
+  font-size: 12px;
+}
+
+.web-experience .field input,
+.web-experience .field select,
+.web-experience .field textarea {
+  border-color: #dce4e6;
+  border-radius: 11px;
+  background-color: #f9fbfb;
+  color: #263940;
+  font-size: 13px;
+}
+
+.web-experience .field input:focus,
+.web-experience .field select:focus,
+.web-experience .field textarea:focus {
+  border-color: #d8816c;
+  box-shadow: 0 0 0 4px rgba(216, 129, 108, .12);
+}
+
+.web-experience .preview {
+  border-color: #e1e9e8;
+  border-radius: 12px;
+  background: #f5f8f7;
+  padding: 12px;
+}
+
+.web-experience .primary-action {
+  min-height: 51px;
+  border-radius: 11px;
+  background: linear-gradient(100deg, #d95e4e, #e1745b);
+  box-shadow: 0 9px 19px rgba(211, 87, 70, .17);
+  font-size: 13px;
+}
+
+.web-experience .primary-action:hover {
+  background: linear-gradient(100deg, #cb5143, #d96750);
+}
+
+.web-experience .summary {
+  gap: 15px;
+  margin: 0 0 20px;
+}
+
+.web-experience .metric {
+  min-height: 83px;
+  gap: 13px;
+  border-color: #e3e9eb;
+  border-radius: 15px;
+  padding: 16px 18px;
+  box-shadow: 0 7px 18px rgba(31, 48, 56, .035);
+}
+
+.web-experience .metric-open {
+  border-color: #f1ded8;
+  background: #fffaf8;
+}
+
+.web-experience .metric-symbol {
+  width: 39px;
+  height: 39px;
+  flex-basis: 39px;
+  border-radius: 12px;
+}
+
+.web-experience .metric b {
+  color: #253940;
+  font-size: 21px;
+}
+
+.web-experience .metric small {
+  color: #829093;
+  font-size: 10px;
+}
+
+.web-experience .queue-card,
+.web-experience .detail-card {
+  padding: 25px 25px;
+}
+
+.web-experience .queue-card .card-heading {
+  margin-bottom: 18px;
+}
+
+.web-experience .filters {
+  margin: 0 -25px;
+  padding: 0 25px 13px;
+  border-color: #e8edef;
+}
+
+.web-experience .filters button {
+  border-radius: 8px;
+  padding: 8px 11px;
+  color: #718084;
+  font-size: 10px;
+}
+
+.web-experience .filters button.active {
+  border-color: #dfe8e8;
+  background: #eef4f3;
+  color: #2c5052;
+}
+
+.web-experience .select {
+  gap: 12px;
+  border-color: #edf0f0;
+  border-radius: 11px;
+  padding: 14px 10px;
+  transition: background .18s, box-shadow .18s, transform .18s;
+}
+
+.web-experience .select:hover {
+  transform: translateY(-1px);
+  background: #f8fbfa;
+}
+
+.web-experience .select.selected {
+  background: #f2f7f5;
+  box-shadow: inset 0 0 0 1px #dce9e4;
+}
+
+.web-experience .select.selected:before {
+  top: 10px;
+  bottom: 10px;
+  width: 3px;
+  border-radius: 3px;
+  background: #d96653;
+}
+
+.web-experience .select div b {
+  color: #293d43;
+  font-size: 12px;
+}
+
+.web-experience .select div small {
+  color: #819093;
+  font-size: 9px;
+}
+
+.web-experience .select div .queue-issue {
+  color: #637275;
+}
+
+.web-experience .detail-card {
+  box-shadow: 0 13px 34px rgba(31, 48, 56, .06);
+}
+
+.web-experience .detail-head h2 {
+  color: #243940;
+  font-size: 23px;
+}
+
+.web-experience .alert {
+  border-color: #e4e9e8;
+  border-radius: 11px;
+  background: #f6f8f7;
+}
+
+.web-experience .alert-priority {
+  border-color: #f1d9d2;
+  background: #fff6f3;
+}
+
+.web-experience .issue {
+  border: 1px solid #e7ecec;
+  border-radius: 12px;
+  background: #fafcfc;
+}
+
+.web-experience .status {
+  border-radius: 20px;
+  padding: 7px 10px;
+  font-size: 9px;
+}
+
+.web-experience .notice {
+  border-radius: 12px;
+}
+
+.web-experience .ticket-list {
+  max-height: 720px;
+  overflow-y: auto;
+  scrollbar-color: #cdd8d8 transparent;
+  scrollbar-width: thin;
+}
+
+.web-experience .help-chat-launcher {
+  box-shadow: 0 12px 30px rgba(35, 56, 64, .22);
+}
+
+@media (max-width: 900px) {
+  .web-experience .employee-grid,
+  .web-experience .technician-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .web-experience .ticket-list {
+    max-height: 540px;
+  }
+}
+
+@media (max-width: 680px) {
+  .web-experience {
+    padding: 0 18px 38px;
+  }
+
+  .web-experience .app-header {
+    height: 68px;
+  }
+
+  .web-experience .portal-content {
+    padding-top: 0;
+  }
+
+  .web-experience .welcome {
+    min-height: 158px;
+    margin: 0 -18px 18px;
+    padding: 27px 22px;
+  }
+
+  .web-experience .welcome h1 {
+    font-size: 30px;
+  }
+
+  .web-experience .welcome .subtle {
+    max-width: 250px;
+    color: #c3d0cf;
+    font-size: 11px;
+  }
+
+  .web-experience .welcome-art {
+    right: -48px;
+  }
+
+  .web-experience .summary {
+    gap: 7px;
+    margin: -2px 0 14px;
+  }
+
+  .web-experience .metric {
+    min-height: 76px;
+    padding: 10px 8px;
+  }
+
+  .web-experience .metric-symbol {
+    width: 27px;
+    height: 27px;
+    flex-basis: 27px;
+  }
+
+  .web-experience .metric b {
+    font-size: 16px;
+  }
+
+  .web-experience .queue-card,
+  .web-experience .detail-card,
+  .web-experience .card {
+    padding: 19px 17px;
+  }
+
+  .web-experience .filters {
+    margin-left: -17px;
+    margin-right: -17px;
+    padding-left: 17px;
+    padding-right: 17px;
+  }
+}

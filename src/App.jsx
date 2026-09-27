@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
 import './App.css'
+import './web.css'
 import { supabase } from './supabase'
 import tescaLogo from './assets/tesca-tescagroup-logo.jpg'
 
@@ -213,7 +214,7 @@ function Login() {
 
 function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout }) {
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${Capacitor.isNativePlatform() ? 'native-experience' : 'web-experience'}`}>
       <PushRegistration userId={user.id} />
       <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} />
       <div className="portal-content">
