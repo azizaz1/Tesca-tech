@@ -14,6 +14,27 @@ const assets = [
 ]
 
 const getAsset = (id) => assets.find((asset) => asset[0] === id) || assets[0]
+const playResolutionSound = async () => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextClass) return
+  const context = new AudioContextClass()
+  if (context.state === 'suspended') await context.resume()
+  const now = context.currentTime
+  ;[660, 880].forEach((frequency, index) => {
+    const oscillator = context.createOscillator()
+    const volume = context.createGain()
+    oscillator.frequency.value = frequency
+    oscillator.type = 'sine'
+    volume.gain.setValueAtTime(0.0001, now + index * 0.16)
+    volume.gain.exponentialRampToValueAtTime(0.16, now + index * 0.16 + 0.025)
+    volume.gain.exponentialRampToValueAtTime(0.0001, now + index * 0.16 + 0.32)
+    oscillator.connect(volume)
+    volume.connect(context.destination)
+    oscillator.start(now + index * 0.16)
+    oscillator.stop(now + index * 0.16 + 0.33)
+  })
+  window.setTimeout(() => void context.close(), 800)
+}
 const repairPlaybooks = [
   { id: 'network-connectivity', title: 'Connexion réseau', steps: ['Vérifier le Wi-Fi ou le câble réseau', 'Confirmer si d’autres appareils sont touchés', 'Désactiver puis réactiver la connexion réseau', 'Tester l’accès à la passerelle et à un site web', 'Noter le message d’erreur ou le résultat'] },
   { id: 'printer', title: 'Imprimante', steps: ['Vérifier l’alimentation et les voyants', 'Contrôler le papier et les consommables', 'Vérifier l’écran et noter tout code erreur', 'Vider puis relancer la file d’impression', 'Imprimer une page de test'] },
@@ -189,7 +210,8 @@ function Login() {
       ? await supabase.auth.signUp({ email, password, options: { data: { full_name: name } } })
       : await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
-    setMessage(result.error ? result.error.message : signup ? 'Compte créé. Vérifiez votre boîte mail pour confirmer votre adresse.' : '')
+    const duplicateEmail = signup && !result.error && result.data?.user?.identities?.length === 0
+    setMessage(result.error ? result.error.message : duplicateEmail ? 'Un compte existe déjà avec cette adresse e-mail.' : signup ? 'Compte créé. Vérifiez votre boîte mail pour confirmer votre adresse.' : '')
   }
 
   const switchMode = () => {
@@ -414,11 +436,12 @@ function Technician({ user, tickets, setTickets }) {
     }).eq('id', selected.dbId).select().single()
     if (error) {
       setUpdateError(error.message)
-      return
+      return false
     }
     setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
       ? { ...mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name }), attachments: selected.attachments, escalations: selected.escalations, playbook: selected.playbook }
       : ticket))
+    return true
   }
   const escalate = async (note) => {
     if (!selected) return
@@ -491,15 +514,25 @@ function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
     setPlaybookId(ticket.playbook?.playbookId || suggestPlaybook(ticket))
     setCheckedSteps(ticket.playbook?.checkedSteps || [])
     setPlaybookNote(ticket.playbook?.note || '')
-    setPlaybookMessage('')
   }, [ticket.id, ticket.playbook?.updatedAt])
+  useEffect(() => setPlaybookMessage(''), [ticket.id])
   const activePlaybook = repairPlaybooks.find((item) => item.id === playbookId) || repairPlaybooks[0]
   const saveCurrentPlaybook = async () => {
     setPlaybookSaving(true)
     setPlaybookMessage('')
-    const result = await savePlaybook(ticket, { playbookId, checkedSteps, note: playbookNote })
-    setPlaybookSaving(false)
-    setPlaybookMessage(result.ok ? 'Diagnostic enregistré pour cette demande.' : result.error)
+    try {
+      const result = await savePlaybook(ticket, { playbookId, checkedSteps, note: playbookNote })
+      setPlaybookMessage(result.ok ? 'Diagnostic enregistr\u00e9 pour cette demande.' : result.error || 'Impossible d\u2019enregistrer le diagnostic.')
+    } catch (error) {
+      console.error('Could not save playbook progress:', error)
+      setPlaybookMessage(error?.message || 'Impossible d\u2019enregistrer le diagnostic. V\u00e9rifiez la connexion puis r\u00e9essayez.')
+    } finally {
+      setPlaybookSaving(false)
+    }
+  }
+  const resolveTicket = async () => {
+    const resolvedStatus = Object.keys(dbStatus).find((status) => dbStatus[status] === 'resolved')
+    if (await update(resolvedStatus, note)) await playResolutionSound()
   }
   const asset = getAsset(ticket.assetId)
   return <section className="card detail-card">
@@ -520,8 +553,8 @@ function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
     {ticket.status === 'Résolu'
-      ? <Notice title="Intervention clôturée" text={ticket.note || 'Aucun compte rendu ajouté.'} />
-      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => update(ticket.status === 'Ouvert' ? 'En cours' : 'Résolu', note)}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => escalate(note)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
+      ? <Notice title={"Intervention cl\u00f4tur\u00e9e"} text={ticket.note || "Aucun compte rendu ajout\u00e9."} />
+      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => ticket.status === 'Ouvert' ? update('En cours', note) : resolveTicket()}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => escalate(note)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
   </section>
 }
 
