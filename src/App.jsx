@@ -315,6 +315,7 @@ function Employee({ user, tickets, setTickets }) {
   const [urgency, setUrgency] = useState('Normale')
   const [files, setFiles] = useState([])
   const [sent, setSent] = useState(false)
+  const [createdReference, setCreatedReference] = useState('')
   const [submitError, setSubmitError] = useState('')
   const submit = async (event) => {
     event.preventDefault()
@@ -331,6 +332,7 @@ function Employee({ user, tickets, setTickets }) {
       setSubmitError(error.message)
       return
     }
+    setCreatedReference(data.reference || '')
     let fileError = ''
     for (const file of files) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -350,6 +352,7 @@ function Employee({ user, tickets, setTickets }) {
     setIssue('')
     setFiles([])
     setSent(true)
+    void playResolutionSound().catch((soundError) => console.warn('Success sound could not play:', soundError))
   }
   const mine = tickets.filter((ticket) => ticket.reporter === user.name)
 
@@ -359,7 +362,6 @@ function Employee({ user, tickets, setTickets }) {
       <form className="card form-card" onSubmit={submit}>
         <div className="card-heading"><span className="heading-icon">＋</span><div><p className="eyebrow">NOUVELLE DEMANDE</p><h2>Signaler un problème</h2></div></div>
         {submitError && <p className="form-message" role="alert">{submitError}</p>}
-        {sent && <Notice title="Demande envoyée" text="Un technicien sera prévenu. Vous pouvez suivre son avancement ici." />}
         <label className="field">Équipement concerné<select value={assetId} onChange={(event) => setAssetId(event.target.value)}>{assets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} — {asset[1]}</option>)}</select></label>
         <div className="preview"><span className="preview-icon">▣</span><div><b>{getAsset(assetId)[1]}</b><small>{getAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
         <label className="field">Décrivez le problème<textarea required value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /></label>
@@ -382,6 +384,7 @@ function Employee({ user, tickets, setTickets }) {
         <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
       </section>
     </section>
+    {sent && <SuccessDialog reference={createdReference} onClose={() => setSent(false)} />}
     <EmployeeHelpChat />
   </>
 }
@@ -422,6 +425,7 @@ function EmployeeHelpChat() {
 function Technician({ user, tickets, setTickets }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [filter, setFilter] = useState('Tous')
+  const [activePage, setActivePage] = useState('tickets')
   const [updateError, setUpdateError] = useState('')
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   const shown = tickets.filter((ticket) => filter === 'Tous' || ticket.status === filter)
@@ -483,25 +487,107 @@ function Technician({ user, tickets, setTickets }) {
     return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
+  const highPriorityOpenCount = tickets.filter((ticket) => ticket.urgency === 'Haute' && ticket.status !== 'Résolu' && ticket.status !== 'Clôturé').length
 
   return <>
-    <Welcome label="ESPACE TECHNICIEN" name={user.name} text="Le tableau de bord de vos interventions." />
-    <section className="summary">
-      <div className="metric metric-open"><span className="metric-symbol">!</span><div><b>{count('Ouvert')}</b><small>Incidents ouverts</small></div><span className="metric-arrow">↗</span></div>
-      <div className="metric"><span className="metric-symbol metric-symbol-warm">◷</span><div><b>{count('En cours')}</b><small>Interventions en cours</small></div><span className="metric-arrow">↗</span></div>
-      <div className="metric metric-total"><span className="metric-symbol metric-symbol-dark">✓</span><div><b>{count('Résolu')}</b><small>Incidents résolus</small></div><span className="metric-arrow">↗</span></div>
-    </section>
-    <section className="grid technician-grid">
+    <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
+    <nav className="technician-page-tabs" role="tablist" aria-label="Pages technicien">
+      <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>
+      <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
+    </nav>
+    {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
+      <TicketAnalytics tickets={tickets} highPriorityOpenCount={highPriorityOpenCount} />
+    </div>}
+    {activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
       <section className="card queue-card">
         <div className="card-heading"><span className="heading-icon">≡</span><div><p className="eyebrow">VUE D’ENSEMBLE</p><h2>File d’intervention</h2></div></div>
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
       {selected && <Detail ticket={selected} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
-    </section>
+    </section>}
   </>
 }
 
+function TicketAnalytics({ tickets, highPriorityOpenCount }) {
+  const openCount = tickets.filter((ticket) => ['Ouvert', 'R\u00e9ouvert'].includes(ticket.status)).length
+  const progressCount = tickets.filter((ticket) => ['En cours', 'Attribu\u00e9', 'En attente de pi\u00e8ces'].includes(ticket.status)).length
+  const resolvedCount = tickets.filter((ticket) => ['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status)).length
+  const total = tickets.length
+  const machineRows = assets.map(([id, name]) => ({
+    label: `${name} \u00b7 ${id}`,
+    count: tickets.filter((ticket) => ticket.assetId === id).length,
+  })).sort((a, b) => b.count - a.count)
+  const departmentRows = [...new Set(assets.map((asset) => asset[2]))].map((department) => ({
+    label: department,
+    count: tickets.filter((ticket) => getAsset(ticket.assetId)[2] === department).length,
+  })).sort((a, b) => b.count - a.count)
+  const openPercent = total ? openCount / total * 100 : 0
+  const progressPercent = total ? progressCount / total * 100 : 0
+  const resolvedPercent = total ? resolvedCount / total * 100 : 0
+  const donutStyle = {
+    background: total
+      ? `conic-gradient(#f16d5b 0% ${openPercent}%, #f0bd68 ${openPercent}% ${openPercent + progressPercent}%, #74b68e ${openPercent + progressPercent}% ${openPercent + progressPercent + resolvedPercent}%, #dce5e0 ${openPercent + progressPercent + resolvedPercent}% 100%)`
+      : '#dce5e0',
+  }
+  const kpis = [
+    { label: 'Incidents ouverts', count: openCount, className: 'kpi-open', icon: '01' },
+    { label: 'En cours', count: progressCount, className: 'kpi-progress', icon: '02' },
+    { label: 'R\u00e9solus', count: resolvedCount, className: 'kpi-resolved', icon: '03' },
+    { label: 'Priorit\u00e9 haute', count: highPriorityOpenCount, className: 'kpi-priority', icon: '!' },
+  ]
+  const renderRows = (rows) => {
+    const maxCount = Math.max(1, ...rows.map((row) => row.count))
+    return rows.map((row, index) => <div className="analytics-row" key={row.label}>
+      <span className="analytics-rank">{String(index + 1).padStart(2, '0')}</span>
+      <div className="analytics-row-main">
+        <div className="analytics-row-heading"><span>{row.label}</span><b>{row.count}<small> tickets</small></b></div>
+        <div className="analytics-track"><span style={{ width: `${(row.count / maxCount) * 100}%` }} /></div>
+      </div>
+    </div>)
+  }
+
+  return <div className="stats-page">
+    <section className="stats-hero">
+      <div className="stats-hero-copy">
+        <p className="stats-eyebrow">TESCA TECH <span /> VUE D'ENSEMBLE</p>
+        <h2>{'Les incidents, en un coup d\u2019oeil.'}</h2>
+        <p className="stats-hero-caption">{'Suivez les demandes et rep\u00e9rez les points qui n\u00e9cessitent votre attention.'}</p>
+        <div className="stats-total"><b>{total}</b><span>{'tickets enregistr\u00e9s'}</span></div>
+      </div>
+      <div className="stats-distribution">
+        <div className="stats-donut" style={donutStyle} role="img" aria-label={`${openCount} ouverts, ${progressCount} en cours, ${resolvedCount} r\u00e9solus`}>
+          <div><b>{total}</b><span>{'tickets'}</span></div>
+        </div>
+        <div className="stats-legend">
+          <span><i className="legend-open" />{'Ouverts'} <b>{openCount}</b></span>
+          <span><i className="legend-progress" />{'En cours'} <b>{progressCount}</b></span>
+          <span><i className="legend-resolved" />{'R\u00e9solus'} <b>{resolvedCount}</b></span>
+        </div>
+      </div>
+      <span className="stats-hero-orb" aria-hidden="true" />
+    </section>
+    <section className="stats-kpis" aria-label="Indicateurs cl\u00e9s">
+      {kpis.map((kpi) => <article className={`stats-kpi ${kpi.className}`} key={kpi.className}>
+        <span className="stats-kpi-icon" aria-hidden="true">{kpi.icon}</span>
+        <b>{kpi.count}</b>
+        <span>{kpi.label}</span>
+      </article>)}
+    </section>
+    <div className="stats-section-heading"><div><p className="eyebrow">ANALYSE DU PARC</p><h3>{'O\u00f9 les incidents se concentrent'}</h3></div><span>{'PAR \u00c9QUIPEMENT & SERVICE'}</span></div>
+    <section className="ticket-analytics" aria-label="Incidents par machine et d\u00e9partement">
+      <article className="card stat-card">
+        <div className="stat-card-heading"><span className="stat-card-icon">01</span><div><p className="eyebrow">{'\u00c9QUIPEMENTS'}</p><h2>{'Machines les plus signal\u00e9es'}</h2></div></div>
+        <div className="stat-rows">{renderRows(machineRows)}</div>
+      </article>
+      <article className="card stat-card">
+        <div className="stat-card-heading"><span className="stat-card-icon stat-card-icon-warm">02</span><div><p className="eyebrow">SITES ET SERVICES</p><h2>{'Incidents par d\u00e9partement'}</h2></div></div>
+        <div className="stat-rows">{renderRows(departmentRows)}</div>
+      </article>
+    </section>
+    <p className="stats-footnote">{'Les chiffres couvrent tous les incidents visibles pour votre compte technicien.'}</p>
+  </div>
+}
 function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
   const [note, setNote] = useState(ticket.note)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
@@ -583,12 +669,26 @@ function Status({ status }) {
   return <span className={`status ${status === 'Ouvert' ? 'danger' : status === 'Résolu' ? 'success' : 'warning'}`}><span className="status-dot" />{status}</span>
 }
 
+function SuccessDialog({ reference, onClose }) {
+  return <div className="success-overlay">
+    <section className="success-dialog" role="dialog" aria-modal="true" aria-labelledby="success-dialog-title">
+      <button type="button" className="success-dialog-close" onClick={onClose} aria-label="Fermer">×</button>
+      <div className="success-emblem" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="m13 24 7 7 16-17" /></svg></div>
+      <p className="success-kicker">DEMANDE TRANSMISE</p>
+      <h2 id="success-dialog-title">Incident ajouté avec succès !</h2>
+      <p className="success-copy">Un technicien a été informé. Vous pouvez suivre votre demande dans « Mes demandes ».</p>
+      {reference && <div className="success-reference"><small>RÉFÉRENCE</small><b>{reference}</b></div>}
+      <button type="button" className="success-continue" onClick={onClose}>Continuer</button>
+    </section>
+  </div>
+}
+
 function Notice({ title, text }) {
   return <div className="notice"><span className="notice-check">✓</span><div><b>{title}</b><span>{text}</span></div></div>
 }
 
-function Welcome({ label, name, text }) {
-  return <section className="welcome"><div><p className="eyebrow">{label}</p><h1>Bonjour, {name.split(' ')[0]}<span className="hello-dot">.</span></h1><p className="subtle">{text}</p></div><div className="welcome-art" aria-hidden="true"><span className="welcome-art-line" /><span className="welcome-art-orb">✳</span><small>TESCA<br />SUPPORT</small></div></section>
+function Welcome({ label, name, text, className = '' }) {
+  return <section className={`welcome ${className}`}><div><p className="eyebrow">{label}</p><h1>Bonjour, {name.split(' ')[0]}<span className="hello-dot">.</span></h1><p className="subtle">{text}</p></div><div className="welcome-art" aria-hidden="true"><span className="welcome-art-line" /><span className="welcome-art-orb">✳</span><small>TESCA<br />SUPPORT</small></div></section>
 }
 
 function Brand({ light = false }) {
