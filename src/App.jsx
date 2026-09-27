@@ -29,6 +29,7 @@ const mapTicket = (row, profiles = {}) => ({
   note: row.technician_note || '',
   level: row.technician_level || 1,
   attachments: row.attachments || [],
+  escalations: row.escalations || [],
 })
 
 const readTickets = async (role) => {
@@ -40,11 +41,13 @@ const readTickets = async (role) => {
   const { data: rows, error } = await query
   if (error) throw error
   if (!rows?.length) return []
-  const userIds = [...new Set(rows.flatMap((row) => [row.reporter_id, row.technician_id].filter(Boolean)))]
-  const { data: people } = await supabase.from('profiles').select('id, full_name').in('id', userIds)
-  const names = Object.fromEntries((people || []).map((person) => [person.id, person.full_name]))
   const { data: files, error: filesError } = await supabase.from('ticket_attachments').select('*').in('ticket_id', rows.map((row) => row.id))
   if (filesError) throw filesError
+  const { data: events, error: eventError } = await supabase.from('ticket_escalations').select('*').in('ticket_id', rows.map((row) => row.id)).order('created_at', { ascending: true })
+  if (eventError) throw eventError
+  const userIds = [...new Set([...rows.flatMap((row) => [row.reporter_id, row.technician_id]), ...(events || []).map((event) => event.technician_id)].filter(Boolean))]
+  const { data: people } = await supabase.from('profiles').select('id, full_name').in('id', userIds)
+  const names = Object.fromEntries((people || []).map((person) => [person.id, person.full_name]))
   const attachmentsByTicket = {}
   await Promise.all((files || []).map(async (file) => {
     const { data, error: urlError } = await supabase.storage.from('ticket-attachments').createSignedUrl(file.storage_path, 3600)
@@ -53,7 +56,18 @@ const readTickets = async (role) => {
       attachmentsByTicket[file.ticket_id].push({ name: file.file_name, mimeType: file.mime_type, url: data.signedUrl })
     }
   }))
-  return rows.map((row) => mapTicket({ ...row, attachments: attachmentsByTicket[row.id] || [] }, names))
+  const escalationsByTicket = {}
+  ;(events || []).forEach((event) => {
+    escalationsByTicket[event.ticket_id] ||= []
+    escalationsByTicket[event.ticket_id].push({
+      fromLevel: event.from_level,
+      toLevel: event.to_level,
+      technician: names[event.technician_id] || 'Technicien',
+      note: event.note,
+      createdAt: new Date(event.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
+    })
+  })
+  return rows.map((row) => mapTicket({ ...row, attachments: attachmentsByTicket[row.id] || [], escalations: escalationsByTicket[row.id] || [] }, names))
 }
 
 export default function App() {
@@ -383,6 +397,31 @@ function Technician({ user, tickets, setTickets }) {
       ? mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name })
       : ticket))
   }
+  const escalate = async (note) => {
+    if (!selected) return
+    setUpdateError('')
+    const { data, error } = await supabase.rpc('escalate_ticket', { p_ticket_id: selected.dbId, p_note: note })
+    if (error) {
+      setUpdateError(error.message)
+      return
+    }
+    const ticketRow = data?.ticket
+    const event = data?.escalation
+    if (!ticketRow || !event) {
+      setUpdateError('La demande a été escaladée, mais son historique n’a pas pu être actualisé. Rechargez la page.')
+      return
+    }
+    const escalation = {
+      fromLevel: event.from_level,
+      toLevel: event.to_level,
+      technician: user.name,
+      note: event.note,
+      createdAt: new Date(event.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
+    }
+    setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
+      ? { ...mapTicket(ticketRow, { [ticketRow.reporter_id]: selected.reporter }), attachments: selected.attachments, escalations: [...(selected.escalations || []), escalation] }
+      : ticket))
+  }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
 
   return <>
@@ -398,12 +437,12 @@ function Technician({ user, tickets, setTickets }) {
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail ticket={selected} update={update} updateError={updateError} />}
+      {selected && <Detail ticket={selected} update={update} escalate={escalate} updateError={updateError} />}
     </section>
   </>
 }
 
-function Detail({ ticket, update, updateError }) {
+function Detail({ ticket, update, escalate, updateError }) {
   const [note, setNote] = useState(ticket.note)
   useEffect(() => setNote(ticket.note), [ticket.id, ticket.note])
   const asset = getAsset(ticket.assetId)
@@ -413,11 +452,12 @@ function Detail({ ticket, update, updateError }) {
     <div className="alert"><span className="alert-symbol">{ticket.level}</span><div><strong>Technicien niveau {ticket.level}</strong><p>{ticket.level < 3 ? `Si le problème n’est pas résolu, escaladez au niveau ${ticket.level + 1}.` : 'Niveau maximum atteint.'}</p></div></div>
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
+    <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
     {ticket.status === 'Résolu'
       ? <Notice title="Intervention clôturée" text={ticket.note || 'Aucun compte rendu ajouté.'} />
-      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => update(ticket.status === 'Ouvert' ? 'En cours' : 'Résolu', note)}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => update('Ouvert', note, ticket.level + 1)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
+      : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => update(ticket.status === 'Ouvert' ? 'En cours' : 'Résolu', note)}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => escalate(note)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
   </section>
 }
 
@@ -427,6 +467,19 @@ function Ticket({ ticket }) {
 
 function AttachmentList({ attachments }) {
   return <section className="attachments"><p className="eyebrow">PHOTOS ET PIÈCES JOINTES</p><div className="attachment-list">{attachments.map((file) => <a className="attachment-item" href={file.url} target="_blank" rel="noreferrer" key={`${file.name}-${file.url}`}>{file.mimeType?.startsWith('image/') ? <img src={file.url} alt={file.name} /> : <span className="attachment-file-icon">PDF</span>}<span>{file.name}</span></a>)}</div></section>
+}
+
+function EscalationTimeline({ ticket }) {
+  return <section className="escalation-timeline" aria-label="Historique des escalades">
+    <div className="timeline-heading"><div><p className="eyebrow">SUIVI DE L’INCIDENT</p><h3>Parcours d’escalade</h3></div><span className="timeline-current">Niveau {ticket.level}</span></div>
+    <ol className="timeline-steps">
+      <li className="timeline-step"><span className="timeline-dot" /><div><b>Signalé · Niveau 1</b><small>{ticket.createdAt}</small></div></li>
+      {(ticket.escalations || []).map((event, index) => <li className="timeline-step" key={`${event.createdAt}-${index}`}><span className="timeline-dot timeline-dot-escalated" /><div><b>Niveau {event.fromLevel} → Niveau {event.toLevel}</b><small>{event.technician} · {event.createdAt}</small>{event.note && <p>{event.note}</p>}</div></li>)}
+      {(ticket.escalations || []).length === 0 && ticket.level > 1
+        ? <li className="timeline-step timeline-step-current"><span className="timeline-dot timeline-dot-current" /><div><b>Niveau actuel · Niveau {ticket.level}</b><small>Les escalades précédentes n’étaient pas historisées.</small></div></li>
+        : <li className="timeline-step timeline-step-current"><span className="timeline-dot timeline-dot-current" /><div><b>{ticket.status === 'Résolu' ? 'Résolu' : 'En traitement'} · Niveau {ticket.level}</b><small>{ticket.status}</small></div></li>}
+    </ol>
+  </section>
 }
 
 function Status({ status }) {
