@@ -127,7 +127,7 @@ export default function App() {
       return
     }
     const { data } = await supabase.from('profiles').select('full_name, role').eq('id', authUser.id).single()
-    if (data) setUser({ id: authUser.id, name: data.full_name, role: data.role === 'technician' || data.role === 'admin' ? 'technician' : 'employee' })
+    if (data) setUser({ id: authUser.id, name: data.full_name, email: authUser.email || '', role: data.role === 'technician' || data.role === 'admin' ? 'technician' : 'employee' })
   }
 
   useEffect(() => {
@@ -697,6 +697,7 @@ function Brand({ light = false }) {
 
 function Header({ user, logout, notifications, setNotifications }) {
   const [open, setOpen] = useState(false)
+  const [profileOpen, setProfileOpen] = useState(false)
   const unread = notifications.filter((item) => !item.read).length
   const markRead = (id) => setNotifications((items) => items.map((item) => item.id === id ? { ...item, read: true } : item))
   return (
@@ -713,7 +714,14 @@ function Header({ user, logout, notifications, setNotifications }) {
             {notifications.length ? <div className="notification-items">{notifications.map((item) => <button className={`notification-item${item.read ? '' : ' unread'}`} key={item.id} onClick={() => markRead(item.id)}><span className="notification-dot" /><span><b>{item.title}</b><small>{item.message}</small><time>{new Date(item.createdAt).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</time></span></button>)}</div> : <p className="notification-empty">Aucune notification pour le moment.</p>}
           </section>}
         </div>
-        <button className="avatar" onClick={logout} title="Se déconnecter" aria-label="Se déconnecter">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button>
+        <div className="header-profile">
+          <button className="avatar" onClick={() => setProfileOpen((value) => !value)} title="Voir mon profil" aria-label="Voir mon profil" aria-expanded={profileOpen} aria-haspopup="dialog">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button>
+          {profileOpen && <section className="profile-card" role="dialog" aria-label="Informations du profil">
+            <div className="profile-card-head"><span className="profile-card-avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><b>{user.name}</b><small>{user.role === 'employee' ? 'Employé' : 'Technicien'}</small></div></div>
+            <div className="profile-card-info"><small>ADRESSE E-MAIL</small><b>{user.email || 'Non renseignée'}</b></div>
+            <button type="button" className="profile-card-logout" onClick={logout}>Se déconnecter <span aria-hidden="true">↗</span></button>
+          </section>}
+        </div>
         <button className="logout-button" onClick={logout}>Quitter <span aria-hidden="true">↗</span></button>
       </div>
     </header>
