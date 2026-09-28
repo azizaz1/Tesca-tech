@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
 import './App.css'
@@ -35,6 +35,28 @@ const playResolutionSound = async () => {
   })
   window.setTimeout(() => void context.close(), 800)
 }
+const playMessageSound = async () => {
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+  if (!AudioContextClass) return
+  const context = new AudioContextClass()
+  if (context.state === 'suspended') await context.resume()
+  const now = context.currentTime
+  ;[740, 990].forEach((frequency, index) => {
+    const start = now + index * 0.13
+    const oscillator = context.createOscillator()
+    const volume = context.createGain()
+    oscillator.frequency.value = frequency
+    oscillator.type = 'sine'
+    volume.gain.setValueAtTime(0.0001, start)
+    volume.gain.exponentialRampToValueAtTime(0.11, start + 0.018)
+    volume.gain.exponentialRampToValueAtTime(0.0001, start + 0.17)
+    oscillator.connect(volume)
+    volume.connect(context.destination)
+    oscillator.start(start)
+    oscillator.stop(start + 0.18)
+  })
+  window.setTimeout(() => void context.close(), 600)
+}
 const repairPlaybooks = [
   { id: 'network-connectivity', title: 'Connexion réseau', steps: ['Vérifier le Wi-Fi ou le câble réseau', 'Confirmer si d’autres appareils sont touchés', 'Désactiver puis réactiver la connexion réseau', 'Tester l’accès à la passerelle et à un site web', 'Noter le message d’erreur ou le résultat'] },
   { id: 'printer', title: 'Imprimante', steps: ['Vérifier l’alimentation et les voyants', 'Contrôler le papier et les consommables', 'Vérifier l’écran et noter tout code erreur', 'Vider puis relancer la file d’impression', 'Imprimer une page de test'] },
@@ -67,6 +89,15 @@ const mapTicket = (row, profiles = {}) => ({
   escalations: row.escalations || [],
   playbook: row.playbook || null,
 })
+
+const mergeChatMessages = (current, incoming) => {
+  const byId = new Map([...current, ...incoming].map((message) => [message.id, message]))
+  return [...byId.values()].sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+}
+const markChatRead = async (ticketId) => {
+  const { error } = await supabase.rpc('mark_ticket_chat_read', { p_ticket_id: ticketId })
+  if (error) console.warn('Could not mark chat as read:', error.message)
+}
 
 const readTickets = async (role) => {
   let query = supabase.from('tickets').select('*').order('created_at', { ascending: false })
@@ -257,15 +288,17 @@ function Login() {
 }
 
 function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout }) {
+  const [activeChatTicket, setActiveChatTicket] = useState(null)
   return (
     <main className={`app-shell ${Capacitor.isNativePlatform() ? 'native-experience' : 'web-experience'}`}>
       <PushRegistration userId={user.id} />
       <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} />
+      <ChatInbox user={user} tickets={tickets} selectedTicket={activeChatTicket} setSelectedTicket={setActiveChatTicket} />
       <div className="portal-content">
         {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
         {user.role === 'employee'
-          ? <Employee user={user} tickets={tickets} setTickets={setTickets} />
-          : <Technician user={user} tickets={tickets} setTickets={setTickets} />}
+          ? <Employee user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} />
+          : <Technician user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} />}
       </div>
     </main>
   )
@@ -309,7 +342,7 @@ function PushRegistration({ userId }) {
   return null
 }
 
-function Employee({ user, tickets, setTickets }) {
+function Employee({ user, tickets, setTickets, onOpenChat }) {
   const [assetId, setAssetId] = useState(assets[0][0])
   const [issue, setIssue] = useState('')
   const [urgency, setUrgency] = useState('Normale')
@@ -381,7 +414,7 @@ function Employee({ user, tickets, setTickets }) {
       <section className="card tracking-card">
         <div className="card-heading"><span className="heading-icon heading-icon-soft">◷</span><div><p className="eyebrow">VOTRE ACTIVITÉ</p><h2>Mes demandes <span className="count-pill">{mine.length}</span></h2></div></div>
         <p className="card-intro">Gardez un œil sur vos signalements récents.</p>
-        <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
+        <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} user={user} onOpenChat={onOpenChat} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
       </section>
     </section>
     {sent && <SuccessDialog reference={createdReference} onClose={() => setSent(false)} />}
@@ -422,7 +455,7 @@ function EmployeeHelpChat() {
   </aside>
 }
 
-function Technician({ user, tickets, setTickets }) {
+function Technician({ user, tickets, setTickets, onOpenChat }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [filter, setFilter] = useState('Tous')
   const [activePage, setActivePage] = useState('tickets')
@@ -504,7 +537,7 @@ function Technician({ user, tickets, setTickets }) {
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail ticket={selected} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
+      {selected && <Detail ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
     </section>}
   </>
 }
@@ -588,7 +621,7 @@ function TicketAnalytics({ tickets, highPriorityOpenCount }) {
     <p className="stats-footnote">{'Les chiffres couvrent tous les incidents visibles pour votre compte technicien.'}</p>
   </div>
 }
-function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
+function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, updateError }) {
   const [note, setNote] = useState(ticket.note)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
   const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
@@ -627,6 +660,7 @@ function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
     <div className="alert"><span className="alert-symbol">{ticket.level}</span><div><strong>Technicien niveau {ticket.level}</strong><p>{ticket.level < 3 ? `Si le problème n’est pas résolu, escaladez au niveau ${ticket.level + 1}.` : 'Niveau maximum atteint.'}</p></div></div>
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
+    <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
     <section className="repair-playbook">
       <div className="playbook-heading"><div><p className="eyebrow">GUIDE DE DIAGNOSTIC</p><h3>Playbook de réparation</h3></div><span className="playbook-count">{checkedSteps.length}/{activePlaybook.steps.length}</span></div>
       <label className="field playbook-select">Choisir un guide<select value={playbookId} onChange={(event) => { setPlaybookId(event.target.value); setCheckedSteps([]); setPlaybookMessage('') }}>{repairPlaybooks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
@@ -644,8 +678,252 @@ function Detail({ ticket, update, escalate, savePlaybook, updateError }) {
   </section>
 }
 
-function Ticket({ ticket }) {
-  return <article className="ticket employee-ticket"><div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div><p>{ticket.issue}</p>{ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}<small className="ticket-meta">Niveau {ticket.level} · {ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small></article>
+function Ticket({ ticket, user, onOpenChat }) {
+  return <article className="ticket employee-ticket"><div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div><p>{ticket.issue}</p>{ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}<small className="ticket-meta">Niveau {ticket.level} · {ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small><TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} /></article>
+}
+
+function TicketChat({ ticket, user, startOpen = false, hideLauncher = false, onClose, onOpenChat }) {
+  const [open, setOpen] = useState(startOpen)
+  const [messages, setMessages] = useState([])
+  const [draft, setDraft] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [sending, setSending] = useState(false)
+  const [error, setError] = useState('')
+  const endRef = useRef(null)
+  const peerName = user.role === 'employee' ? (ticket.assignee || 'Équipe technique') : ticket.reporter
+  const closeChat = () => {
+    setOpen(false)
+    onClose?.()
+  }
+  const openChat = () => onOpenChat ? onOpenChat(ticket) : setOpen(true)
+
+  useEffect(() => {
+    if (!open) return undefined
+    window.dispatchEvent(new CustomEvent('ticket-chat-opened', { detail: ticket.dbId }))
+    return () => window.dispatchEvent(new CustomEvent('ticket-chat-closed', { detail: ticket.dbId }))
+  }, [open, ticket.dbId])
+
+  useEffect(() => {
+    if (!open) return undefined
+    let active = true
+    const openedAt = new Date().toISOString()
+    void markChatRead(ticket.dbId)
+    const load = async () => {
+      setLoading(true)
+      setError('')
+      const { data, error: loadError } = await supabase.from('ticket_chat_messages').select('id, ticket_id, sender_id, body, created_at').eq('ticket_id', ticket.dbId).order('created_at', { ascending: true })
+      if (!active) return
+      if (loadError) setError(loadError.message)
+      else setMessages((current) => mergeChatMessages(current, data || []))
+      setLoading(false)
+    }
+    void load()
+    const channel = supabase.channel(`ticket-chat-${ticket.dbId}-${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ticket_chat_messages', filter: `ticket_id=eq.${ticket.dbId}` }, (payload) => {
+        if (active) {
+          setMessages((current) => mergeChatMessages(current, [payload.new]))
+          if (payload.new.sender_id !== user.id) void markChatRead(ticket.dbId)
+        }
+      })
+      .subscribe()
+    const poll = window.setInterval(async () => {
+      const { data, error: pollError } = await supabase.from('ticket_chat_messages').select('id, ticket_id, sender_id, body, created_at').eq('ticket_id', ticket.dbId).gte('created_at', openedAt).order('created_at', { ascending: true })
+      if (!active) return
+      if (pollError) setError(pollError.message)
+      else if (data?.length) {
+        setMessages((current) => mergeChatMessages(current, data))
+        if (data.some((message) => message.sender_id !== user.id)) void markChatRead(ticket.dbId)
+      }
+    }, 4000)
+    return () => {
+      active = false
+      window.clearInterval(poll)
+      void supabase.removeChannel(channel)
+    }
+  }, [open, ticket.dbId, user.id])
+
+  useEffect(() => { endRef.current?.scrollIntoView({ behavior: 'smooth' }) }, [messages, open])
+
+  const send = async (event) => {
+    event.preventDefault()
+    const body = draft.trim()
+    if (!body || sending) return
+    setSending(true)
+    setError('')
+    const { data, error: sendError } = await supabase.from('ticket_chat_messages').insert({ ticket_id: ticket.dbId, sender_id: user.id, body }).select('id, ticket_id, sender_id, body, created_at').single()
+    if (sendError) setError(sendError.message)
+    else {
+      setMessages((current) => current.some((item) => item.id === data.id) ? current : [...current, data])
+      setDraft('')
+    }
+    setSending(false)
+  }
+
+  return <div className={`ticket-chat-wrap ${user.role === 'technician' && !hideLauncher ? 'technician-chat-wrap' : ''}`}>
+    {!hideLauncher && (user.role === 'technician'
+      ? <section className="technician-chat-prompt"><span className="technician-chat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z" /><path d="M8 11h8M8 14h5" /></svg></span><span className="technician-chat-copy"><small>MESSAGERIE EMPLOYÉ</small><b>Échanger avec {ticket.reporter}</b><span>Demandez des précisions ou informez l’employé de l’avancement.</span></span><button type="button" className="technician-chat-action" onClick={openChat}>Envoyer un message <span aria-hidden="true">→</span></button></section>
+      : <button type="button" className="ticket-chat-open" onClick={openChat}><span aria-hidden="true">▣</span> Écrire à l’équipe IT <span className="chat-open-arrow" aria-hidden="true">→</span></button>)}
+    {open && <div className="messenger-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeChat() }}>
+      <section className="messenger" role="dialog" aria-modal="true" aria-label={`Conversation ${ticket.id}`}>
+        <header className="messenger-header"><div className="messenger-peer-avatar">{peerName.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</div><div className="messenger-peer-copy"><b>{peerName}</b><small><i /> Conversation liée à {ticket.id}</small></div><button type="button" className="messenger-close" onClick={closeChat} aria-label="Fermer la conversation">×</button></header>
+        <div className="messenger-ticket"><span className="messenger-ticket-icon">⌘</span><span><small>{getAsset(ticket.assetId)[1]} · {ticket.assetId}</small><b>{ticket.issue}</b></span><Status status={ticket.status} /></div>
+        <div className="messenger-body" aria-live="polite">
+          <div className="messenger-day">MESSAGES DE L’INCIDENT</div>
+          {loading && <p className="messenger-empty">Chargement de la conversation…</p>}
+          {!loading && messages.length === 0 && <div className="messenger-empty-state"><span>✦</span><b>La conversation commence ici</b><small>Échangez avec {peerName} au sujet de cet incident.</small></div>}
+          {messages.map((message) => <div key={message.id} className={`messenger-row ${message.sender_id === user.id ? 'mine' : 'theirs'}`}><div className="messenger-bubble"><p>{message.body}</p><time>{new Date(message.created_at).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}</time></div></div>)}
+          {error && <p className="messenger-error" role="alert">{error}</p>}
+          <div ref={endRef} />
+        </div>
+        <form className="messenger-compose" onSubmit={send}><input value={draft} onChange={(event) => setDraft(event.target.value)} placeholder="Écrivez un message…" aria-label="Votre message" maxLength={4000} /><button type="submit" disabled={!draft.trim() || sending} aria-label="Envoyer le message">➤</button></form>
+        <p className="messenger-footnote">Messages privés entre l’employé et l’équipe technique</p>
+      </section>
+    </div>}
+  </div>
+}
+
+function ChatInbox({ user, tickets, selectedTicket, setSelectedTicket }) {
+  const [open, setOpen] = useState(false)
+  const unreadStorageKey = `chat-unread-${user.id}`
+  const [unreadByTicket, setUnreadByTicket] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(unreadStorageKey) || '{}') } catch { return {} }
+  })
+  const [toast, setToast] = useState(null)
+  const unreadInitializedRef = useRef(false)
+  const activeTicketIdRef = useRef(selectedTicket?.dbId || null)
+  const ticketsRef = useRef(tickets)
+  activeTicketIdRef.current = selectedTicket?.dbId || null
+  ticketsRef.current = tickets
+  const unreadCount = Object.values(unreadByTicket).reduce((sum, count) => sum + count, 0)
+  const selected = tickets.find((ticket) => ticket.dbId === selectedTicket?.dbId) || selectedTicket
+
+  useEffect(() => {
+    localStorage.setItem(unreadStorageKey, JSON.stringify(unreadByTicket))
+  }, [unreadStorageKey, unreadByTicket])
+
+  const ticketIdsKey = tickets.map((ticket) => ticket.dbId).filter(Boolean).join(',')
+  useEffect(() => {
+    const ticketIds = ticketIdsKey ? ticketIdsKey.split(',') : []
+    if (!ticketIds.length) return undefined
+    let active = true
+    const loadUnreadCounts = async () => {
+      const { data, error } = await supabase.rpc('get_unread_ticket_chat_counts', { p_ticket_ids: ticketIds })
+      if (error) {
+        console.warn('Could not load unread chat counts:', error.message)
+        return
+      }
+      if (!active) return
+      const next = Object.fromEntries((data || [])
+        .map((row) => [row.ticket_id, Number(row.unread_count)])
+        .filter(([, count]) => count > 0))
+      setUnreadByTicket(next)
+      if (!unreadInitializedRef.current) {
+        unreadInitializedRef.current = true
+        const total = Object.values(next).reduce((sum, count) => sum + count, 0)
+        if (total > 0) {
+          const ticket = ticketsRef.current.find((item) => next[item.dbId] > 0)
+          if (ticket) setToast({ id: `unread-${Date.now()}`, ticketId: ticket.dbId, ticket, body: `Vous avez ${total} messages non lus.`, count: total })
+        }
+      }
+    }
+    void loadUnreadCounts()
+    return () => { active = false }
+  }, [ticketIdsKey])
+
+  useEffect(() => {
+    const onOpened = (event) => {
+      const ticketId = event.detail
+      activeTicketIdRef.current = ticketId
+      setUnreadByTicket((current) => {
+        if (!current[ticketId]) return current
+        const next = { ...current }
+        delete next[ticketId]
+        return next
+      })
+      setToast((current) => current?.ticketId === ticketId ? null : current)
+    }
+    const onClosed = (event) => {
+      if (activeTicketIdRef.current === event.detail) activeTicketIdRef.current = null
+    }
+    window.addEventListener('ticket-chat-opened', onOpened)
+    window.addEventListener('ticket-chat-closed', onClosed)
+    return () => {
+      window.removeEventListener('ticket-chat-opened', onOpened)
+      window.removeEventListener('ticket-chat-closed', onClosed)
+    }
+  }, [])
+
+  useEffect(() => {
+    const startedAt = new Date().toISOString()
+    const seenIds = new Set()
+    const notify = (message) => {
+      if (!message?.id || seenIds.has(message.id)) return
+      if (!message.ticket_id || message.sender_id === user.id) {
+        seenIds.add(message.id)
+        return
+      }
+      const ticket = ticketsRef.current.find((item) => item.dbId === message.ticket_id)
+      if (!ticket) return
+      seenIds.add(message.id)
+      if (activeTicketIdRef.current === message.ticket_id) return
+      setUnreadByTicket((current) => ({ ...current, [message.ticket_id]: (current[message.ticket_id] || 0) + 1 }))
+      setToast({ id: message.id, ticketId: message.ticket_id, ticket, body: message.body })
+      void playMessageSound().catch((soundError) => console.warn('Message sound could not play:', soundError))
+    }
+    const channel = supabase.channel(`incoming-ticket-chat-${user.id}`)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'ticket_chat_messages' }, (payload) => notify(payload.new))
+      .subscribe((status) => {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') console.warn('Realtime chat notifications unavailable; polling for new messages.')
+      })
+    const pollForMessages = async () => {
+      const ticketIds = ticketsRef.current.map((ticket) => ticket.dbId).filter(Boolean)
+      if (!ticketIds.length) return
+      const { data, error } = await supabase.from('ticket_chat_messages')
+        .select('id, ticket_id, sender_id, body, created_at')
+        .in('ticket_id', ticketIds)
+        .gte('created_at', startedAt)
+        .order('created_at', { ascending: true })
+      if (error) {
+        console.warn('Could not check for new chat messages:', error.message)
+        return
+      }
+      ;(data || []).forEach(notify)
+    }
+    const poll = window.setInterval(() => { void pollForMessages() }, 4000)
+    return () => {
+      window.clearInterval(poll)
+      void supabase.removeChannel(channel)
+    }
+  }, [user.id])
+
+  useEffect(() => {
+    if (!toast) return undefined
+    const timeout = window.setTimeout(() => setToast(null), 5500)
+    return () => window.clearTimeout(timeout)
+  }, [toast?.id])
+
+  const openConversation = (ticket) => {
+    setUnreadByTicket((current) => {
+      if (!current[ticket.dbId]) return current
+      const next = { ...current }
+      delete next[ticket.dbId]
+      return next
+    })
+    setToast((current) => current?.ticketId === ticket.dbId ? null : current)
+    setSelectedTicket(ticket)
+    setOpen(false)
+  }
+
+  return <>
+    <aside className="chat-inbox-launcher">
+      <button type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}><span className="chat-inbox-icon" aria-hidden="true">◉</span><span>Messages</span>{unreadCount > 0 && <span className="chat-inbox-unread">{unreadCount > 99 ? '99+' : unreadCount}</span>}<span className="chat-inbox-arrow" aria-hidden="true">{open ? '×' : '↗'}</span></button>
+      {open && <section className="chat-inbox-panel"><div className="chat-inbox-heading"><span><b>Vos conversations</b><small>Discussions liées aux incidents</small></span><button type="button" onClick={() => setOpen(false)} aria-label="Fermer">×</button></div>
+        {tickets.length ? <div className="chat-inbox-list">{tickets.map((ticket) => <button type="button" className="chat-inbox-item" key={ticket.dbId} onClick={() => openConversation(ticket)}><span className="chat-inbox-avatar">{user.role === 'employee' ? (ticket.assignee || 'IT').split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase() : ticket.reporter.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span><span className="chat-inbox-copy"><b>{user.role === 'employee' ? (ticket.assignee || 'Équipe technique') : ticket.reporter}</b><small>{ticket.id} · {getAsset(ticket.assetId)[1]}</small><small className="chat-inbox-issue">{ticket.issue}</small></span>{unreadByTicket[ticket.dbId] > 0 && <span className="chat-inbox-item-unread">{unreadByTicket[ticket.dbId]}</span>}<span className="chat-inbox-chevron">›</span></button>)}</div> : <p className="chat-inbox-empty">Vos conversations apparaîtront ici dès qu’un incident sera créé.</p>}
+      </section>}
+      {toast && <button type="button" className="message-toast" onClick={() => openConversation(toast.ticket)}><span className="message-toast-icon" aria-hidden="true">●</span><span><b>+{toast.count || unreadByTicket[toast.ticketId] || 1} {((toast.count || unreadByTicket[toast.ticketId] || 1) > 1) ? 'nouveaux messages' : 'nouveau message'}</b><small>{user.role === 'employee' ? (toast.ticket.assignee || 'Équipe technique') : toast.ticket.reporter} · {toast.ticket.id}</small><small className="message-toast-preview">{toast.body}</small></span><span className="message-toast-close" onClick={(event) => { event.stopPropagation(); setToast(null) }}>×</span></button>}
+    </aside>
+    {selected && <TicketChat key={selected.dbId} ticket={selected} user={user} startOpen hideLauncher onClose={() => setSelectedTicket(null)} />}
+  </>
 }
 
 function AttachmentList({ attachments }) {

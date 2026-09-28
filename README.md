@@ -35,8 +35,9 @@ A French-language IT support portal for reporting and tracking equipment inciden
 
 1. In the Supabase dashboard, open **SQL Editor** and run `supabase/schema.sql` to create the tables, row-level security policies, and sample assets.
 2. Run `supabase/migrations/001_auth_profiles.sql` to create employee profiles automatically when users register.
-3. Add the project URL and publishable key to `.env`, then start the app and create an account.
-4. To grant technician access, find the user's ID in Supabase Auth and run the promotion query shown in `supabase/migrations/001_auth_profiles.sql`.
+3. Run migrations `002` through `009` in numeric order. `008_ticket_chat_messages.sql` enables private, realtime incident conversations, and `009_ticket_chat_read_status.sql` stores per-user read cursors for unread counts across sign-outs and devices.
+4. Add the project URL and publishable key to `.env`, then start the app and create an account.
+5. To grant technician access, find the user's ID in Supabase Auth and run the promotion query shown in `supabase/migrations/001_auth_profiles.sql`.
 
 ## Incident sync and Android push notifications
 
