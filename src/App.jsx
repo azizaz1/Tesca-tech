@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Capacitor } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
+import { SpeechRecognition } from '@capgo/capacitor-speech-recognition'
 import './App.css'
 import './web.css'
 import { supabase } from './supabase'
@@ -350,6 +351,42 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   const [sent, setSent] = useState(false)
   const [createdReference, setCreatedReference] = useState('')
   const [submitError, setSubmitError] = useState('')
+  const [voiceLanguage, setVoiceLanguage] = useState('fr-FR')
+  const [voiceBusy, setVoiceBusy] = useState(false)
+  const [voiceError, setVoiceError] = useState('')
+  const dictateIssue = async () => {
+    setVoiceError('')
+    setVoiceBusy(true)
+    try {
+      let transcript = ''
+      if (Capacitor.isNativePlatform()) {
+        const permission = await SpeechRecognition.requestPermissions()
+        if (permission.speechRecognition !== 'granted') throw new Error('Autorisez l’accès au microphone pour dicter votre demande.')
+        const { available } = await SpeechRecognition.available()
+        if (!available) throw new Error('La dictée vocale n’est pas disponible sur cet appareil.')
+        const result = await SpeechRecognition.start({ language: voiceLanguage, maxResults: 1, prompt: 'Décrivez le problème rencontré', partialResults: false, popup: true })
+        transcript = result.matches?.[0] || ''
+      } else {
+        const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition
+        if (!Recognition) throw new Error('La dictée vocale n’est pas prise en charge par ce navigateur.')
+        transcript = await new Promise((resolve, reject) => {
+          const recognition = new Recognition()
+          recognition.lang = voiceLanguage
+          recognition.interimResults = false
+          recognition.maxAlternatives = 1
+          recognition.onresult = (event) => resolve(event.results?.[0]?.[0]?.transcript || '')
+          recognition.onerror = (event) => reject(new Error(event.error === 'not-allowed' ? 'Autorisez le microphone dans votre navigateur.' : 'La dictée vocale a échoué. Réessayez.'))
+          recognition.start()
+        })
+      }
+      if (transcript.trim()) setIssue((current) => `${current.trim()}${current.trim() ? ' ' : ''}${transcript.trim()}`.slice(0, 4000))
+    } catch (error) {
+      console.warn('Voice dictation failed:', error)
+      setVoiceError(error.message || 'Impossible de démarrer la dictée vocale.')
+    } finally {
+      setVoiceBusy(false)
+    }
+  }
   const submit = async (event) => {
     event.preventDefault()
     if (!issue.trim()) return
@@ -397,7 +434,13 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
         {submitError && <p className="form-message" role="alert">{submitError}</p>}
         <label className="field">Équipement concerné<select value={assetId} onChange={(event) => setAssetId(event.target.value)}>{assets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} — {asset[1]}</option>)}</select></label>
         <div className="preview"><span className="preview-icon">▣</span><div><b>{getAsset(assetId)[1]}</b><small>{getAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
-        <label className="field">Décrivez le problème<textarea required value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /></label>
+        <label className="field">Décrivez le problème<textarea required maxLength={4000} value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /></label>
+        <div className="voice-entry">
+          <label className="voice-language">Langue de dictée<select value={voiceLanguage} onChange={(event) => setVoiceLanguage(event.target.value)} disabled={voiceBusy}><option value="fr-FR">Français</option><option value="ar-TN">العربية</option><option value="en-US">English</option></select></label>
+          <button type="button" className={`voice-button ${voiceBusy ? 'voice-button-active' : ''}`} onClick={() => void dictateIssue()} disabled={voiceBusy}><span aria-hidden="true">{voiceBusy ? '●' : '🎙'}</span>{voiceBusy ? 'Écoute en cours…' : 'Dicter le problème'}</button>
+        </div>
+        <small className="voice-help">La reconnaissance utilise le service vocal disponible sur votre appareil.</small>
+        {voiceError && <p className="voice-error" role="alert">{voiceError}</p>}
         <label className="field">Photos ou pièces jointes<input type="file" accept="image/jpeg,image/png,image/webp,application/pdf" multiple onChange={(event) => {
           const selected = Array.from(event.target.files || [])
           if (selected.length > 5) { setSubmitError('Vous pouvez joindre jusqu’à 5 fichiers.'); event.target.value = ''; return }

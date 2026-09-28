@@ -30,6 +30,17 @@
 }
 @media(max-width:360px){.auth-panel{padding-left:19px;padding-right:19px}.auth-content{padding-top:30px}.auth-heading h1{font-size:29px}.mobile-secure{padding:6px 7px;font-size:6px}}
 
+.voice-entry{display:flex;align-items:end;gap:9px;margin:-5px 0 7px}
+.voice-language{display:flex;flex-direction:column;gap:5px;min-width:120px;color:#68726d;font-size:9px;font-weight:700}
+.voice-language select{height:39px;border:1px solid #e5e8e2;border-radius:9px;padding:0 10px;background:#fff;color:#344448;font-size:11px}
+.voice-button{display:flex;align-items:center;justify-content:center;gap:7px;min-height:39px;border:1px solid #d7e5da;border-radius:9px;padding:0 12px;background:#edf5ef;color:#36704a;font-size:10px;font-weight:750;transition:background .16s,border-color .16s}
+.voice-button:hover:not(:disabled){border-color:#8bb99a;background:#e4f0e7}
+.voice-button:disabled{cursor:wait;opacity:.7}
+.voice-button-active{background:#fff0ed;color:#b84d40;border-color:#f1c6be}
+.voice-help{display:block;margin:-1px 0 14px;color:#929995;font-size:9px;line-height:1.5}
+.voice-error{margin:-6px 0 14px;color:#b64e43;font-size:10px;line-height:1.5}
+@media(max-width:420px){.voice-entry{align-items:stretch;flex-direction:column}.voice-language{min-width:0}.voice-language select,.voice-button{min-height:43px}.voice-button{width:100%}}
+
 /* Equipment support sign-in polish */
 .auth-page{background:radial-gradient(ellipse at 12% 10%,#fff 0,transparent 38%),#edf1ef}
 .auth-layout{border:1px solid rgba(33,53,58,.06);border-radius:26px;box-shadow:0 34px 90px rgba(31,47,51,.14)}
