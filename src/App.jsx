@@ -12,7 +12,18 @@ const assets = [
   ['PC-FIN-008', 'Poste recouvrement', 'Finance', '2e étage · Bureau 206'],
   ['IMP-RH-002', 'Imprimante RH', 'Ressources humaines', '1er étage · Accueil RH'],
   ['NET-001', 'Routeur principal', 'Infrastructure', 'Salle serveur · RDC'],
+  ['IMP-FIN-001', 'Imprimante Finance', 'Finance', '2e étage · Bureau 210'],
+  ['PC-RH-001', 'Poste gestion RH', 'Ressources humaines', '1er étage · Bureau RH'],
+  ['PC-INF-002', 'Poste technicien IT', 'Infrastructure', 'Salle serveur · RDC'],
+  ['SW-INF-001', 'Commutateur réseau', 'Infrastructure', 'Salle serveur · Baie 2'],
+  ['PC-LOG-001', 'Poste expédition', 'Logistique', 'Entrepôt · Bureau logistique'],
+  ['SCAN-LOG-001', 'Scanner codes-barres', 'Logistique', 'Entrepôt · Zone expédition'],
+  ['IMP-LOG-001', 'Imprimante étiquettes', 'Logistique', 'Entrepôt · Zone expédition'],
+  ['TAB-LOG-001', 'Tablette inventaire', 'Logistique', 'Entrepôt · Réserve'],
+  ['PC-ADM-001', 'Poste administratif', 'Administration', 'Bâtiment principal · Bureau 101'],
+  ['IMP-PRD-001', 'Imprimante de production', 'Production', 'Atelier · Poste de contrôle'],
 ]
+const departments = [...new Set(assets.map((asset) => asset[2]))]
 
 const getAsset = (id) => assets.find((asset) => asset[0] === id) || assets[0]
 const playResolutionSound = async () => {
@@ -83,6 +94,8 @@ const mapTicket = (row, profiles = {}) => ({
   urgency: row.priority === 'high' ? 'Haute' : 'Normale',
   status: statusLabels[row.status] || 'Ouvert',
   createdAt: new Date(row.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' }),
+  createdAtRaw: row.created_at,
+  resolvedAt: row.resolved_at || null,
   assignee: profiles[row.technician_id] || '',
   note: row.technician_note || '',
   level: row.technician_level || 1,
@@ -563,7 +576,6 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
     return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
-  const highPriorityOpenCount = tickets.filter((ticket) => ticket.urgency === 'Haute' && ticket.status !== 'Résolu' && ticket.status !== 'Clôturé').length
 
   return <>
     <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
@@ -572,7 +584,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
     </nav>
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
-      <TicketAnalytics tickets={tickets} highPriorityOpenCount={highPriorityOpenCount} />
+      <TicketAnalytics tickets={tickets} />
     </div>}
     {activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
       <section className="card queue-card">
@@ -585,19 +597,44 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   </>
 }
 
-function TicketAnalytics({ tickets, highPriorityOpenCount }) {
-  const openCount = tickets.filter((ticket) => ['Ouvert', 'R\u00e9ouvert'].includes(ticket.status)).length
-  const progressCount = tickets.filter((ticket) => ['En cours', 'Attribu\u00e9', 'En attente de pi\u00e8ces'].includes(ticket.status)).length
-  const resolvedCount = tickets.filter((ticket) => ['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status)).length
-  const total = tickets.length
-  const machineRows = assets.map(([id, name]) => ({
-    label: `${name} \u00b7 ${id}`,
-    count: tickets.filter((ticket) => ticket.assetId === id).length,
-  })).sort((a, b) => b.count - a.count)
-  const departmentRows = [...new Set(assets.map((asset) => asset[2]))].map((department) => ({
-    label: department,
-    count: tickets.filter((ticket) => getAsset(ticket.assetId)[2] === department).length,
-  })).sort((a, b) => b.count - a.count)
+function TicketAnalytics({ tickets }) {
+  const [period, setPeriod] = useState('30')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [statusFilter, setStatusFilter] = useState('Tous')
+  const [urgencyFilter, setUrgencyFilter] = useState('Toutes')
+  const [departmentFilter, setDepartmentFilter] = useState('Tous')
+  const [assetFilter, setAssetFilter] = useState('Tous')
+  const now = new Date()
+  const periodStart = period === 'custom' ? (startDate ? new Date(`${startDate}T00:00:00`) : null) : period === 'year' ? new Date(now.getFullYear(), 0, 1) : new Date(now.getTime() - Number(period) * 86400000)
+  const periodEnd = period === 'custom' && endDate ? new Date(`${endDate}T23:59:59.999`) : now
+  const inRange = (timestamp) => {
+    if (!timestamp) return false
+    const time = new Date(timestamp).getTime()
+    return (!periodStart || time >= periodStart.getTime()) && time <= periodEnd.getTime()
+  }
+  const filtered = tickets.filter((ticket) =>
+    (statusFilter === 'Tous' || ticket.status === statusFilter) &&
+    (urgencyFilter === 'Toutes' || ticket.urgency === urgencyFilter) &&
+    (departmentFilter === 'Tous' || getAsset(ticket.assetId)[2] === departmentFilter) &&
+    (assetFilter === 'Tous' || ticket.assetId === assetFilter))
+  const periodTickets = filtered.filter((ticket) => inRange(ticket.createdAtRaw))
+  const resolvedTickets = filtered.filter((ticket) => inRange(ticket.resolvedAt))
+  const openCount = periodTickets.filter((ticket) => ['Ouvert', 'R\u00e9ouvert'].includes(ticket.status)).length
+  const progressCount = periodTickets.filter((ticket) => ['En cours', 'Attribu\u00e9', 'En attente de pi\u00e8ces'].includes(ticket.status)).length
+  const resolvedCount = periodTickets.filter((ticket) => ['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status)).length
+  const total = periodTickets.length
+  const durations = resolvedTickets.filter((ticket) => ticket.createdAtRaw && ticket.resolvedAt).map((ticket) => (new Date(ticket.resolvedAt) - new Date(ticket.createdAtRaw)) / 60000).filter((minutes) => minutes >= 0).sort((a, b) => a - b)
+  const median = durations.length ? durations.length % 2 ? durations[(durations.length - 1) / 2] : (durations[durations.length / 2 - 1] + durations[durations.length / 2]) / 2 : null
+  const formatDuration = (minutes) => minutes < 60 ? `${Math.round(minutes)} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} h ${Math.round(minutes % 60)} min` : `${Math.floor(minutes / 1440)} j ${Math.floor(minutes % 1440 / 60)} h`
+  const machineRows = assets.map(([id, name]) => ({ label: `${name} \u00b7 ${id}`, count: periodTickets.filter((ticket) => ticket.assetId === id).length })).sort((a, b) => b.count - a.count)
+  const departmentRows = departments.map((department) => ({ label: department, count: periodTickets.filter((ticket) => getAsset(ticket.assetId)[2] === department).length })).sort((a, b) => b.count - a.count)
+  const volumeByWeek = Array.from({ length: 8 }, (_, index) => {
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (7 - index) * 7)
+    start.setHours(0, 0, 0, 0)
+    const end = new Date(start.getTime() + 7 * 86400000)
+    return { label: start.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }), count: filtered.filter((ticket) => { const created = new Date(ticket.createdAtRaw); return created >= start && created < end && inRange(ticket.createdAtRaw) }).length }
+  })
   const openPercent = total ? openCount / total * 100 : 0
   const progressPercent = total ? progressCount / total * 100 : 0
   const resolvedPercent = total ? resolvedCount / total * 100 : 0
@@ -610,7 +647,7 @@ function TicketAnalytics({ tickets, highPriorityOpenCount }) {
     { label: 'Incidents ouverts', count: openCount, className: 'kpi-open', icon: '01' },
     { label: 'En cours', count: progressCount, className: 'kpi-progress', icon: '02' },
     { label: 'R\u00e9solus', count: resolvedCount, className: 'kpi-resolved', icon: '03' },
-    { label: 'Priorit\u00e9 haute', count: highPriorityOpenCount, className: 'kpi-priority', icon: '!' },
+    { label: 'Priorit\u00e9 haute', count: periodTickets.filter((ticket) => ticket.urgency === 'Haute' && !['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status)).length, className: 'kpi-priority', icon: '!' },
   ]
   const renderRows = (rows) => {
     const maxCount = Math.max(1, ...rows.map((row) => row.count))
@@ -624,11 +661,20 @@ function TicketAnalytics({ tickets, highPriorityOpenCount }) {
   }
 
   return <div className="stats-page">
+    <section className="card stats-filters" aria-label="Filtres des statistiques">
+      <label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="30">30 derniers jours</option><option value="90">90 derniers jours</option><option value="year">Cette année</option><option value="custom">Personnalisée</option></select></label>
+      {period === 'custom' && <><label>Du<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Au<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></>}
+      <label>Statut<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Tous</option>{['Ouvert', 'Attribu\u00e9', 'En cours', 'En attente de pi\u00e8ces', 'R\u00e9solu', 'Cl\u00f4tur\u00e9', 'R\u00e9ouvert'].map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label>Urgence<select value={urgencyFilter} onChange={(event) => setUrgencyFilter(event.target.value)}><option>Toutes</option><option>Normale</option><option>Haute</option></select></label>
+      <label>Département<select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option>Tous</option>{departments.map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label>Équipement<select value={assetFilter} onChange={(event) => setAssetFilter(event.target.value)}><option value="Tous">Tous</option>{assets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+      <button type="button" onClick={() => { setPeriod('30'); setStartDate(''); setEndDate(''); setStatusFilter('Tous'); setUrgencyFilter('Toutes'); setDepartmentFilter('Tous'); setAssetFilter('Tous') }}>Réinitialiser</button>
+    </section>
     <section className="stats-hero">
       <div className="stats-hero-copy">
         <p className="stats-eyebrow">TESCA TECH <span /> VUE D'ENSEMBLE</p>
         <h2>{'Les incidents, en un coup d\u2019oeil.'}</h2>
-        <p className="stats-hero-caption">{'Suivez les demandes et rep\u00e9rez les points qui n\u00e9cessitent votre attention.'}</p>
+        <p className="stats-hero-caption">{'Volume des demandes ouvertes sur la p\u00e9riode s\u00e9lectionn\u00e9e.'}</p>
         <div className="stats-total"><b>{total}</b><span>{'tickets enregistr\u00e9s'}</span></div>
       </div>
       <div className="stats-distribution">
@@ -643,7 +689,15 @@ function TicketAnalytics({ tickets, highPriorityOpenCount }) {
       </div>
       <span className="stats-hero-orb" aria-hidden="true" />
     </section>
-    <section className="stats-kpis" aria-label="Indicateurs cl\u00e9s">
+    <section className="card stats-trend-card">
+      <div className="stat-card-heading"><span className="stat-card-icon">↗</span><div><p className="eyebrow">TENDANCE</p><h2>Tickets créés · 8 dernières semaines</h2></div></div>
+      <div className="stats-week-chart" role="img" aria-label="Nombre de tickets ouverts chaque semaine">{volumeByWeek.map((week) => <div className="stats-week" key={week.label}><b>{week.count}</b><span className="stats-week-track"><i style={{ height: `${Math.max(4, week.count / Math.max(1, ...volumeByWeek.map((item) => item.count)) * 100)}%` }} /></span><small>{week.label}</small></div>)}</div>
+      <p className="stats-footnote">Évolution sur les 8 dernières semaines; les filtres s’appliquent.</p>
+    </section>
+    <section className="stats-kpis" aria-label="Délai de résolution">
+      <article className="stats-kpi kpi-resolved stats-resolution-kpi"><span className="stats-kpi-icon" aria-hidden="true">⏱</span><b>{median === null ? '—' : formatDuration(median)}</b><span>Délai médian de résolution</span><small>{resolvedTickets.length} ticket{resolvedTickets.length === 1 ? '' : 's'} résolu{resolvedTickets.length === 1 ? '' : 's'} dans la période</small></article>
+    </section>
+    <section className="stats-kpis" aria-label="Indicateurs clés">
       {kpis.map((kpi) => <article className={`stats-kpi ${kpi.className}`} key={kpi.className}>
         <span className="stats-kpi-icon" aria-hidden="true">{kpi.icon}</span>
         <b>{kpi.count}</b>
@@ -661,7 +715,7 @@ function TicketAnalytics({ tickets, highPriorityOpenCount }) {
         <div className="stat-rows">{renderRows(departmentRows)}</div>
       </article>
     </section>
-    <p className="stats-footnote">{'Les chiffres couvrent tous les incidents visibles pour votre compte technicien.'}</p>
+    <p className="stats-footnote">Le volume et les répartitions utilisent la date de création; le délai médian utilise la date de résolution. Les tickets historiques sans date de résolution sont exclus du calcul.</p>
   </div>
 }
 function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, updateError }) {
