@@ -1,2 +1,5 @@
 [functions.ticket-push]
 verify_jwt = false
+
+[functions.ticket-email]
+verify_jwt = false
