@@ -1,6 +1,6 @@
 -- Run this once in Supabase: SQL Editor > New query > Run.
 create type public.user_role as enum ('employee', 'technician', 'admin');
-create type public.ticket_status as enum ('open', 'assigned', 'in_progress', 'waiting_parts', 'resolved', 'closed', 'reopened');
+create type public.ticket_status as enum ('open', 'assigned', 'in_progress', 'waiting_parts', 'resolved', 'closed', 'reopened', 'cancelled');
 create type public.ticket_priority as enum ('normal', 'high');
 
 create table public.profiles (
@@ -52,6 +52,7 @@ on conflict (id) do nothing;
 insert into public.assets (id, name, kind, department, location) values
 ('IMP-FIN-001', 'Imprimante Finance', 'Imprimante', 'Finance', '2e étage · Bureau 210'),
 ('PC-RH-001', 'Poste gestion RH', 'PC fixe', 'Ressources humaines', '1er étage · Bureau RH'),
+('PC-RH-002', 'Poste RH', 'PC fixe', 'Ressources humaines', '1er étage · Bureau RH'),
 ('PC-INF-002', 'Poste technicien IT', 'PC portable', 'Infrastructure', 'Salle serveur · RDC'),
 ('SW-INF-001', 'Commutateur réseau', 'Réseau', 'Infrastructure', 'Salle serveur · Baie 2'),
 ('PC-LOG-001', 'Poste expédition', 'PC fixe', 'Logistique', 'Entrepôt · Bureau logistique'),

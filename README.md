@@ -35,7 +35,7 @@ A French-language IT support portal for reporting and tracking equipment inciden
 
 1. In the Supabase dashboard, open **SQL Editor** and run `supabase/schema.sql` to create the tables, row-level security policies, and sample assets.
 2. Run `supabase/migrations/001_auth_profiles.sql` to create employee profiles automatically when users register.
-3. Run migrations `002` through `011` in numeric order. `008_ticket_chat_messages.sql` enables private, realtime incident conversations, `009_ticket_chat_read_status.sql` stores per-user read cursors for unread counts across sign-outs and devices, `010_ticket_resolution_time.sql` records each ticket's latest resolution time for analytics, and `011_sample_assets.sql` adds sample equipment across departments.
+3. Run migrations `002` through `012` in numeric order. `008_ticket_chat_messages.sql` enables private, realtime incident conversations, `009_ticket_chat_read_status.sql` stores per-user read cursors for unread counts across sign-outs and devices, `010_ticket_resolution_time.sql` records each ticket's latest resolution time for analytics, `011_sample_assets.sql` adds sample equipment across departments, and `012_employee_ticket_cancellation.sql` lets employees cancel their own open, unassigned incidents while preserving their history.
 4. Add the project URL and publishable key to `.env`, then start the app and create an account.
 5. To grant technician access, find the user's ID in Supabase Auth and run the promotion query shown in `supabase/migrations/001_auth_profiles.sql`.
 
@@ -54,6 +54,22 @@ To enable this on your Supabase and Firebase projects:
 7. Build and install a fresh Android app with `npm run android:build`. Sign in as an employee and technician and allow notifications when Android asks.
 
 The older sample tickets stored in browser local storage are not imported into Supabase. New incidents created after the migration will be shared and can trigger notifications. Push delivery requires Firebase and the Supabase webhook setup above; until then, incident sync works but push messages cannot be sent.
+
+## Technician email notifications
+
+New incidents can be emailed to every Supabase Auth user whose profile role is `technician` or `admin`. The Edge Function reads recipients server-side and sends through a Google Apps Script relay authorized by the Gmail account owner. This avoids the verified-domain requirement of Resend's test sender.
+
+To enable email notifications:
+
+1. In Google Apps Script, create a project and paste `supabase/functions/ticket-email/GmailRelay.gs` into its editor.
+2. In **Project Settings → Script Properties**, add `RELAY_SECRET` with a long random value.
+3. Deploy the script as a **Web app**, executing as your Google account and allowing access to anyone. Complete Google's authorization prompt to grant Gmail sending permission. Copy the deployed `/exec` URL.
+4. In Supabase **Edge Functions → Secrets**, set `GMAIL_RELAY_URL` to that `/exec` URL, `GMAIL_RELAY_SECRET` to the exact same value as the script's `RELAY_SECRET`, and `TICKET_EMAIL_WEBHOOK_SECRET` to another long random value. `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` are provided by the Supabase Edge Functions runtime.
+5. Deploy with `supabase functions deploy ticket-email`.
+6. In Supabase **Integrations → Database Webhooks**, create a webhook on `public.tickets` for **INSERT**, pointing to `https://YOUR_PROJECT_REF.supabase.co/functions/v1/ticket-email`. Add a custom `x-webhook-secret` header with the same value as `TICKET_EMAIL_WEBHOOK_SECRET`.
+7. Create a test incident and confirm that the technician and admin accounts receive the email from the Google account that authorized the script.
+
+The database webhook runs asynchronously, so a temporary email delivery failure will not prevent an employee from submitting an incident. Check the Edge Function logs for delivery errors. Keep relay URLs and secrets server-side; never put them in the client app or Git. Gmail sending is subject to Google's account limits and policies.
 
 ## Available commands
 

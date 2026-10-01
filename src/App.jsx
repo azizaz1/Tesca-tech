@@ -6,6 +6,7 @@ import './App.css'
 import './web.css'
 import { supabase } from './supabase'
 import tescaLogo from './assets/tesca-tescagroup-logo.jpg'
+import officeFloorplan from './assets/office-floorplan.jpg'
 
 const assets = [
   ['PC-FIN-014', 'Poste comptable', 'Finance', '2e étage · Bureau 204'],
@@ -14,6 +15,7 @@ const assets = [
   ['NET-001', 'Routeur principal', 'Infrastructure', 'Salle serveur · RDC'],
   ['IMP-FIN-001', 'Imprimante Finance', 'Finance', '2e étage · Bureau 210'],
   ['PC-RH-001', 'Poste gestion RH', 'Ressources humaines', '1er étage · Bureau RH'],
+  ['PC-RH-002', 'Poste RH', 'Ressources humaines', '1er étage · Bureau RH'],
   ['PC-INF-002', 'Poste technicien IT', 'Infrastructure', 'Salle serveur · RDC'],
   ['SW-INF-001', 'Commutateur réseau', 'Infrastructure', 'Salle serveur · Baie 2'],
   ['PC-LOG-001', 'Poste expédition', 'Logistique', 'Entrepôt · Bureau logistique'],
@@ -82,8 +84,8 @@ const suggestPlaybook = (ticket) => {
   if (/pc|poste|ordinateur|lent|demarr|ecran|clavier/.test(text)) return 'workstation'
   return 'general-it'
 }
-const statusLabels = { open: 'Ouvert', assigned: 'Attribué', in_progress: 'En cours', waiting_parts: 'En attente de pièces', resolved: 'Résolu', closed: 'Clôturé', reopened: 'Réouvert' }
-const dbStatus = { Ouvert: 'open', Attribué: 'assigned', 'En cours': 'in_progress', 'En attente de pièces': 'waiting_parts', Résolu: 'resolved', Clôturé: 'closed', Réouvert: 'reopened' }
+const statusLabels = { open: 'Ouvert', assigned: 'Attribué', in_progress: 'En cours', waiting_parts: 'En attente de pièces', resolved: 'Résolu', closed: 'Clôturé', reopened: 'Réouvert', cancelled: 'Annulé' }
+const dbStatus = { Ouvert: 'open', Attribué: 'assigned', 'En cours': 'in_progress', 'En attente de pièces': 'waiting_parts', Résolu: 'resolved', Clôturé: 'closed', Réouvert: 'reopened', Annulé: 'cancelled' }
 
 const mapTicket = (row, profiles = {}) => ({
   dbId: row.id,
@@ -363,6 +365,8 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   const [files, setFiles] = useState([])
   const [sent, setSent] = useState(false)
   const [createdReference, setCreatedReference] = useState('')
+  const [createdTicketId, setCreatedTicketId] = useState('')
+  const [highlightedTicketId, setHighlightedTicketId] = useState('')
   const [submitError, setSubmitError] = useState('')
   const [voiceLanguage, setVoiceLanguage] = useState('fr-FR')
   const [voiceBusy, setVoiceBusy] = useState(false)
@@ -416,6 +420,7 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
       return
     }
     setCreatedReference(data.reference || '')
+    setCreatedTicketId(data.id)
     let fileError = ''
     for (const file of files) {
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -436,6 +441,23 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
     setFiles([])
     setSent(true)
     void playResolutionSound().catch((soundError) => console.warn('Success sound could not play:', soundError))
+  }
+  const closeSuccess = () => {
+    setSent(false)
+    if (!Capacitor.isNativePlatform() || !createdTicketId) return
+    setHighlightedTicketId(createdTicketId)
+    window.setTimeout(() => setHighlightedTicketId(''), 3500)
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.getElementById(`ticket-${createdTicketId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }))
+  }
+  const cancelTicket = async (ticket) => {
+    const { data, error } = await supabase.rpc('cancel_own_ticket', { p_ticket_id: ticket.dbId })
+    if (error) return { ok: false, error: error.code === '42501' ? 'Cette demande a déjà été prise en charge ou ne peut plus être annulée.' : error.message }
+    setTickets((all) => all.map((current) => current.dbId === ticket.dbId
+      ? { ...mapTicket(data, { [user.id]: user.name }), attachments: current.attachments, escalations: current.escalations, playbook: current.playbook }
+      : current))
+    return { ok: true }
   }
   const mine = tickets.filter((ticket) => ticket.reporter === user.name)
 
@@ -470,10 +492,10 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
       <section className="card tracking-card">
         <div className="card-heading"><span className="heading-icon heading-icon-soft">◷</span><div><p className="eyebrow">VOTRE ACTIVITÉ</p><h2>Mes demandes <span className="count-pill">{mine.length}</span></h2></div></div>
         <p className="card-intro">Gardez un œil sur vos signalements récents.</p>
-        <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} user={user} onOpenChat={onOpenChat} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
+        <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} user={user} onOpenChat={onOpenChat} onCancel={cancelTicket} highlighted={ticket.dbId === highlightedTicketId} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
       </section>
     </section>
-    {sent && <SuccessDialog reference={createdReference} onClose={() => setSent(false)} />}
+    {sent && <SuccessDialog reference={createdReference} native={Capacitor.isNativePlatform()} onClose={closeSuccess} />}
     <EmployeeHelpChat />
   </>
 }
@@ -514,7 +536,7 @@ function EmployeeHelpChat() {
 function Technician({ user, tickets, setTickets, onOpenChat }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [filter, setFilter] = useState('Tous')
-  const [activePage, setActivePage] = useState('tickets')
+  const [activePage, setActivePage] = useState('map')
   const [updateError, setUpdateError] = useState('')
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   const shown = tickets.filter((ticket) => filter === 'Tous' || ticket.status === filter)
@@ -578,18 +600,20 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
 
   return <>
-    <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
+    <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : activePage === 'map' ? 'Repérez les équipements par zone et par bureau.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
     <nav className="technician-page-tabs" role="tablist" aria-label="Pages technicien">
       <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
+      <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
     </nav>
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
+    {activePage === 'map' && <div role="tabpanel" id="panel-map" aria-labelledby="tab-map"><FacilityMap tickets={tickets} /></div>}
     {activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
       <section className="card queue-card">
         <div className="card-heading"><span className="heading-icon">≡</span><div><p className="eyebrow">VUE D’ENSEMBLE</p><h2>File d’intervention</h2></div></div>
-        <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
+        <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu', 'Annulé'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
       {selected && <Detail ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
@@ -597,6 +621,34 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   </>
 }
 
+function FacilityMap({ tickets }) {
+  const [selectedAssetId, setSelectedAssetId] = useState(null)
+  const getZone = (location) => {
+    const text = location.toLocaleLowerCase('fr')
+    if (text.includes('2e')) return '2e étage'
+    if (text.includes('1er')) return '1er étage'
+    if (text.includes('entrep')) return 'Entrepôt'
+    if (text.includes('atelier')) return 'Atelier'
+    return 'Rez-de-chaussée'
+  }
+  const zones = [...new Set(assets.map((asset) => getZone(asset[3])))]
+  const selectedAsset = selectedAssetId ? getAsset(selectedAssetId) : null
+  const pointsByZone = [[[54, 46], [61, 50], [58, 56]], [[78, 62], [84, 70], [80, 76]], [[26, 78], [32, 84], [38, 77], [43, 82]], [[55, 61], [62, 58], [68, 64], [72, 56]], [[82, 34], [88, 40]]]
+  const markerPosition = (asset, index) => {
+    const zoneIndex = zones.indexOf(getZone(asset[3]))
+    const points = pointsByZone[zoneIndex] || pointsByZone[0]
+    const [left, top] = points[index % points.length]
+    return { left: `${left}%`, top: `${top}%` }
+  }
+  return <section className="facility-map card">
+    <div className="facility-plan">
+      <div className="facility-plan-image"><img src={officeFloorplan} alt="Illustrated overhead view of an office with desks and rooms" />
+        {assets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['Résolu', 'Clôturé', 'Annulé'].includes(ticket.status)); return <button type="button" className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} · ${asset[3]}`} aria-label={asset[1]}>{index + 1}</button> })}
+      </div>
+      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} · {selectedAsset[2]} · {selectedAsset[3]}</small></section>}
+    </div>
+  </section>
+}
 function TicketAnalytics({ tickets }) {
   const [period, setPeriod] = useState('30')
   const [startDate, setStartDate] = useState('')
@@ -664,7 +716,7 @@ function TicketAnalytics({ tickets }) {
     <section className="card stats-filters" aria-label="Filtres des statistiques">
       <label>Période<select value={period} onChange={(event) => setPeriod(event.target.value)}><option value="30">30 derniers jours</option><option value="90">90 derniers jours</option><option value="year">Cette année</option><option value="custom">Personnalisée</option></select></label>
       {period === 'custom' && <><label>Du<input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>Au<input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label></>}
-      <label>Statut<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Tous</option>{['Ouvert', 'Attribu\u00e9', 'En cours', 'En attente de pi\u00e8ces', 'R\u00e9solu', 'Cl\u00f4tur\u00e9', 'R\u00e9ouvert'].map((item) => <option key={item}>{item}</option>)}</select></label>
+      <label>Statut<select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option>Tous</option>{['Ouvert', 'Attribu\u00e9', 'En cours', 'En attente de pi\u00e8ces', 'R\u00e9solu', 'Cl\u00f4tur\u00e9', 'R\u00e9ouvert', 'Annul\u00e9'].map((item) => <option key={item}>{item}</option>)}</select></label>
       <label>Urgence<select value={urgencyFilter} onChange={(event) => setUrgencyFilter(event.target.value)}><option>Toutes</option><option>Normale</option><option>Haute</option></select></label>
       <label>Département<select value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option>Tous</option>{departments.map((item) => <option key={item}>{item}</option>)}</select></label>
       <label>Équipement<select value={assetFilter} onChange={(event) => setAssetFilter(event.target.value)}><option value="Tous">Tous</option>{assets.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
@@ -758,25 +810,55 @@ function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, upda
     <div className={`alert ${ticket.urgency === 'Haute' ? 'alert-priority' : ''}`}><span className="alert-symbol">{ticket.urgency === 'Haute' ? '!' : 'i'}</span><div><strong>{ticket.urgency === 'Haute' ? 'À traiter en priorité' : 'Nouveau signalement'}</strong><p>Par {ticket.reporter} <span>·</span> {ticket.createdAt}</p></div></div>
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
     <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
-    <section className="repair-playbook">
+    {ticket.status !== 'Annulé' && <section className="repair-playbook">
       <div className="playbook-heading"><div><p className="eyebrow">GUIDE DE DIAGNOSTIC</p><h3>Playbook de réparation</h3></div><span className="playbook-count">{checkedSteps.length}/{activePlaybook.steps.length}</span></div>
       <label className="field playbook-select">Choisir un guide<select value={playbookId} onChange={(event) => { setPlaybookId(event.target.value); setCheckedSteps([]); setPlaybookMessage('') }}>{repairPlaybooks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
       <div className="playbook-progress"><span style={{ width: `${(checkedSteps.length / activePlaybook.steps.length) * 100}%` }} /></div>
       <div className="playbook-steps">{activePlaybook.steps.map((step, index) => <label className={`playbook-step ${checkedSteps.includes(index) ? 'checked' : ''}`} key={step}><input type="checkbox" checked={checkedSteps.includes(index)} onChange={() => { setCheckedSteps((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index]); setPlaybookMessage('') }} /><span className="playbook-check" aria-hidden="true">✓</span><span>{step}</span></label>)}</div>
       <label className="field playbook-note">Résultat du diagnostic<textarea value={playbookNote} onChange={(event) => { setPlaybookNote(event.target.value); setPlaybookMessage('') }} placeholder="Résultats, messages d’erreur, actions effectuées…" /></label>
       <div className="playbook-footer"><button type="button" className="playbook-save" onClick={saveCurrentPlaybook} disabled={playbookSaving}>{playbookSaving ? 'Enregistrement…' : 'Enregistrer le diagnostic'}</button>{playbookMessage && <small className={playbookMessage.startsWith('Diagnostic enregistré') ? 'playbook-success' : 'playbook-error'} role="status">{playbookMessage}</small>}</div>
-    </section>
+    </section>}
     <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
-    {ticket.status === 'Résolu'
+    {ticket.status === 'Annulé'
+      ? <Notice title="Demande annulée" text="L’employé a annulé cette demande avant sa prise en charge." />
+      : ticket.status === 'Résolu'
       ? <Notice title={"Intervention cl\u00f4tur\u00e9e"} text={ticket.note || "Aucun compte rendu ajout\u00e9."} />
       : <><label className="field">Compte rendu technicien<textarea value={note} onChange={(event) => setNote(event.target.value)} placeholder="Diagnostic et action réalisée…" /></label><button className="primary-action" onClick={() => ticket.status === 'Ouvert' ? update('En cours', note) : resolveTicket()}>{ticket.status === 'Ouvert' ? 'Prendre en charge' : 'Marquer comme résolu'} <span aria-hidden="true">↗</span></button>{ticket.level < 3 && <button className="secondary-action" onClick={() => escalate(note)}>Non résolu — escalader au niveau {ticket.level + 1}</button>}</>}
   </section>
 }
 
-function Ticket({ ticket, user, onOpenChat }) {
-  return <article className="ticket employee-ticket"><div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div><p>{ticket.issue}</p>{ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}<small className="ticket-meta">Niveau {ticket.level} · {ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small><TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} /></article>
+function Ticket({ ticket, user, onOpenChat, onCancel, highlighted = false }) {
+  const [cancelPrompt, setCancelPrompt] = useState(false)
+  const [cancelBusy, setCancelBusy] = useState(false)
+  const [cancelError, setCancelError] = useState('')
+  const cancel = async () => {
+    setCancelBusy(true)
+    setCancelError('')
+    try {
+      const result = await onCancel(ticket)
+      if (!result?.ok) setCancelError(result?.error || 'Impossible d’annuler cette demande.')
+      else setCancelPrompt(false)
+    } catch (error) {
+      setCancelError(error?.message || 'Impossible d’annuler cette demande.')
+    } finally {
+      setCancelBusy(false)
+    }
+  }
+  return <article id={`ticket-${ticket.dbId}`} className={`ticket employee-ticket ${highlighted ? 'employee-ticket-highlighted' : ''}`}>
+    <div className="employee-ticket-top"><span className="ticket-marker">{ticket.urgency === 'Haute' ? '!' : '↗'}</span><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} <span>·</span> {ticket.assetId}</small></div><Status status={ticket.status} /></div>
+    <p>{ticket.issue}</p>
+    {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
+    <small className="ticket-meta">Niveau {ticket.level} · {ticket.createdAt}{ticket.assignee ? ` · ${ticket.assignee}` : ''}</small>
+    {onCancel && ticket.status === 'Ouvert' && !ticket.assignee && <div className="ticket-cancel-actions">
+      {cancelError && <p className="ticket-cancel-error" role="alert">{cancelError}</p>}
+      {cancelPrompt
+        ? <><p>Annuler cette demande ? Elle restera dans l’historique comme annulée.</p><div><button type="button" className="ticket-cancel-confirm" onClick={() => void cancel()} disabled={cancelBusy}>{cancelBusy ? 'Annulation…' : 'Oui, annuler'}</button><button type="button" className="ticket-cancel-keep" onClick={() => { setCancelPrompt(false); setCancelError('') }} disabled={cancelBusy}>Garder ma demande</button></div></>
+        : <button type="button" className="ticket-cancel-start" onClick={() => setCancelPrompt(true)}>Annuler ma demande</button>}
+    </div>}
+    <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
+  </article>
 }
 
 function TicketChat({ ticket, user, startOpen = false, hideLauncher = false, onClose, onOpenChat }) {
@@ -1035,16 +1117,17 @@ function EscalationTimeline({ ticket }) {
       {(ticket.escalations || []).map((event, index) => <li className="timeline-step" key={`${event.createdAt}-${index}`}><span className="timeline-dot timeline-dot-escalated" /><div><b>Niveau {event.fromLevel} → Niveau {event.toLevel}</b><small>{event.technician} · {event.createdAt}</small>{event.note && <p>{event.note}</p>}</div></li>)}
       {(ticket.escalations || []).length === 0 && ticket.level > 1
         ? <li className="timeline-step timeline-step-current"><span className="timeline-dot timeline-dot-current" /><div><b>Niveau actuel · Niveau {ticket.level}</b><small>Les escalades précédentes n’étaient pas historisées.</small></div></li>
-        : <li className="timeline-step timeline-step-current"><span className="timeline-dot timeline-dot-current" /><div><b>{ticket.status === 'Résolu' ? 'Résolu' : 'En traitement'} · Niveau {ticket.level}</b><small>{ticket.status}</small></div></li>}
+        : <li className="timeline-step timeline-step-current"><span className="timeline-dot timeline-dot-current" /><div><b>{ticket.status === 'Annulé' ? 'Annulé par l’employé' : ticket.status === 'Résolu' ? 'Résolu' : 'En traitement'} · Niveau {ticket.level}</b><small>{ticket.status}</small></div></li>}
     </ol>
   </section>
 }
 
 function Status({ status }) {
-  return <span className={`status ${status === 'Ouvert' ? 'danger' : status === 'Résolu' ? 'success' : 'warning'}`}><span className="status-dot" />{status}</span>
+  const tone = status === 'Ouvert' ? 'danger' : status === 'Résolu' ? 'success' : status === 'Annulé' ? 'neutral' : 'warning'
+  return <span className={`status ${tone}`}><span className="status-dot" />{status}</span>
 }
 
-function SuccessDialog({ reference, onClose }) {
+function SuccessDialog({ reference, native = false, onClose }) {
   return <div className="success-overlay">
     <section className="success-dialog" role="dialog" aria-modal="true" aria-labelledby="success-dialog-title">
       <button type="button" className="success-dialog-close" onClick={onClose} aria-label="Fermer">×</button>
@@ -1053,7 +1136,7 @@ function SuccessDialog({ reference, onClose }) {
       <h2 id="success-dialog-title">Incident ajouté avec succès !</h2>
       <p className="success-copy">Un technicien a été informé. Vous pouvez suivre votre demande dans « Mes demandes ».</p>
       {reference && <div className="success-reference"><small>RÉFÉRENCE</small><b>{reference}</b></div>}
-      <button type="button" className="success-continue" onClick={onClose}>Continuer</button>
+      <button type="button" className="success-continue" onClick={onClose}>{native ? 'Voir ma demande' : 'Continuer'}</button>
     </section>
   </div>
 }
@@ -1102,3 +1185,4 @@ function Header({ user, logout, notifications, setNotifications }) {
     </header>
   )
 }
+

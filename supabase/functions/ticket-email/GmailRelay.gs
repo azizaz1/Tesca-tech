@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Gmail relay for Setcar ticket notifications.
  * Deploy this as a Google Apps Script web app running as your account.
  * Store RELAY_SECRET in Project Settings > Script Properties.
