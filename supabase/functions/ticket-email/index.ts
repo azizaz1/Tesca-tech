@@ -55,7 +55,7 @@ const supabaseRequest = async (path: string, serviceKey: string, method = 'GET')
 
 const findTechnicianEmails = async (serviceKey: string) => {
   const technicianProfiles = await supabaseRequest(
-    '/rest/v1/profiles?select=id&role=in.(technician,admin)',
+    '/rest/v1/profiles?select=id&role=in.(technician,it_manager,admin)',
     serviceKey,
   ) as Array<{ id: string }>
   const technicianIds = new Set(technicianProfiles.map((profile) => profile.id))

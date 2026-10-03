@@ -99,6 +99,7 @@ const mapTicket = (row, profiles = {}) => ({
   createdAtRaw: row.created_at,
   resolvedAt: row.resolved_at || null,
   assignee: profiles[row.technician_id] || '',
+  technicianId: row.technician_id || '',
   note: row.technician_note || '',
   level: row.technician_level || 1,
   attachments: row.attachments || [],
@@ -174,7 +175,7 @@ export default function App() {
       return
     }
     const { data } = await supabase.from('profiles').select('full_name, role').eq('id', authUser.id).single()
-    if (data) setUser({ id: authUser.id, name: data.full_name, email: authUser.email || '', role: data.role === 'technician' || data.role === 'admin' ? 'technician' : 'employee' })
+    if (data) setUser({ id: authUser.id, name: data.full_name, email: authUser.email || '', role: data.role })
   }
 
   useEffect(() => {
@@ -218,7 +219,7 @@ export default function App() {
     const channel = supabase.channel(`tickets-${user.id}`).on('postgres_changes', { event: '*', schema: 'public', table: 'tickets' }, (payload) => {
       const row = payload.new
       let notification
-      if (payload.eventType === 'INSERT' && user.role === 'technician' && row?.reference) {
+      if (payload.eventType === 'INSERT' && user.role !== 'employee' && row?.reference) {
         notification = { title: 'Nouvel incident', message: `Une nouvelle demande ${row.reference} a été signalée.` }
       } else if (payload.eventType === 'UPDATE' && user.role === 'employee' && row?.reporter_id === user.id && payload.old?.status !== row.status) {
         const status = statusLabels[row.status] || row.status
@@ -371,6 +372,8 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   const [voiceLanguage, setVoiceLanguage] = useState('fr-FR')
   const [voiceBusy, setVoiceBusy] = useState(false)
   const [voiceError, setVoiceError] = useState('')
+  const [ticketQuery, setTicketQuery] = useState('')
+  const [ticketStatus, setTicketStatus] = useState('Tous')
   const dictateIssue = async () => {
     setVoiceError('')
     setVoiceBusy(true)
@@ -460,6 +463,13 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
     return { ok: true }
   }
   const mine = tickets.filter((ticket) => ticket.reporter === user.name)
+  const normalizedQuery = ticketQuery.trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const visibleTickets = mine.filter((ticket) => {
+    const matchesStatus = ticketStatus === 'Tous' || ticket.status === ticketStatus
+    const searchable = [ticket.id, ticket.assetId, getAsset(ticket.assetId)[1], ticket.issue, ticket.status]
+      .join(' ').toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return matchesStatus && (!normalizedQuery || searchable.includes(normalizedQuery))
+  })
 
   return <>
     <Welcome label="ESPACE EMPLOYÉ" name={user.name} text="Un souci avec votre équipement ? On s’en occupe." />
@@ -492,7 +502,8 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
       <section className="card tracking-card">
         <div className="card-heading"><span className="heading-icon heading-icon-soft">◷</span><div><p className="eyebrow">VOTRE ACTIVITÉ</p><h2>Mes demandes <span className="count-pill">{mine.length}</span></h2></div></div>
         <p className="card-intro">Gardez un œil sur vos signalements récents.</p>
-        <div className="ticket-list">{mine.length ? mine.map((ticket) => <Ticket key={ticket.id} ticket={ticket} user={user} onOpenChat={onOpenChat} onCancel={cancelTicket} highlighted={ticket.dbId === highlightedTicketId} />) : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
+        {mine.length > 0 && <div className="ticket-search-tools"><label className="ticket-search"><span aria-hidden="true">⌕</span><input type="search" value={ticketQuery} onChange={(event) => setTicketQuery(event.target.value)} placeholder="Référence, équipement ou description" aria-label="Rechercher dans mes demandes" /></label><select value={ticketStatus} onChange={(event) => setTicketStatus(event.target.value)} aria-label="Filtrer mes demandes par statut"><option value="Tous">Tous les statuts</option>{[...new Set(mine.map((ticket) => ticket.status))].map((status) => <option key={status}>{status}</option>)}</select></div>}
+        <div className="ticket-list">{mine.length ? visibleTickets.length ? visibleTickets.map((ticket) => <Ticket key={ticket.id} ticket={ticket} user={user} onOpenChat={onOpenChat} onCancel={cancelTicket} highlighted={ticket.dbId === highlightedTicketId} />) : <p className="empty">Aucune demande ne correspond à cette recherche.</p> : <p className="empty">Aucune demande pour le moment. Vos signalements apparaîtront ici.</p>}</div>
       </section>
     </section>
     {sent && <SuccessDialog reference={createdReference} native={Capacitor.isNativePlatform()} onClose={closeSuccess} />}
@@ -536,10 +547,29 @@ function EmployeeHelpChat() {
 function Technician({ user, tickets, setTickets, onOpenChat }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [filter, setFilter] = useState('Tous')
-  const [activePage, setActivePage] = useState('map')
+  const [ticketQuery, setTicketQuery] = useState('')
+  const [departmentFilter, setDepartmentFilter] = useState('Tous')
+  const [activePage, setActivePage] = useState(user.role === 'it_manager' ? 'overview' : 'map')
   const [updateError, setUpdateError] = useState('')
+  const [technicians, setTechnicians] = useState([])
+  const [assignmentId, setAssignmentId] = useState('')
+  const [assignmentBusy, setAssignmentBusy] = useState(false)
+  const isManager = user.role === 'it_manager'
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
-  const shown = tickets.filter((ticket) => filter === 'Tous' || ticket.status === filter)
+  useEffect(() => {
+    if (!isManager) return
+    supabase.from('profiles').select('id, full_name, role').in('role', ['technician', 'it_manager', 'admin']).order('full_name')
+      .then(({ data, error }) => error ? setUpdateError(error.message) : setTechnicians(data || []))
+  }, [isManager])
+  useEffect(() => setAssignmentId(selected?.technicianId || ''), [selected?.dbId, selected?.technicianId])
+  const normalizedQuery = ticketQuery.trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+  const shown = tickets.filter((ticket) => {
+    const searchable = [ticket.id, ticket.assetId, getAsset(ticket.assetId)[1], getAsset(ticket.assetId)[2], ticket.issue, ticket.reporter, ticket.assignee]
+      .filter(Boolean).join(' ').toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    return (filter === 'Tous' || ticket.status === filter)
+      && (departmentFilter === 'Tous' || getAsset(ticket.assetId)[2] === departmentFilter)
+      && (!normalizedQuery || searchable.includes(normalizedQuery))
+  })
   const update = async (status, note, level = selected?.level || 1) => {
     if (!selected) return
     setUpdateError('')
@@ -547,7 +577,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
       status: dbStatus[status],
       technician_note: note,
       technician_level: level,
-      technician_id: status === 'Ouvert' ? null : user.id,
+      technician_id: status === 'Ouvert' ? null : isManager ? (selected.technicianId || user.id) : user.id,
     }).eq('id', selected.dbId).select().single()
     if (error) {
       setUpdateError(error.message)
@@ -557,6 +587,24 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
       ? { ...mapTicket(data, { [data.reporter_id]: selected.reporter, [user.id]: user.name }), attachments: selected.attachments, escalations: selected.escalations, playbook: selected.playbook }
       : ticket))
     return true
+  }
+  const assignTicket = async () => {
+    if (!selected || !isManager) return
+    setAssignmentBusy(true)
+    setUpdateError('')
+    const assignedTech = technicians.find((person) => person.id === assignmentId)
+    const { data, error } = await supabase.from('tickets').update({
+      technician_id: assignmentId || null,
+      status: assignmentId && selected.status === 'Ouvert' ? 'assigned' : !assignmentId && selected.status === 'Attribu\u00e9' ? 'open' : dbStatus[selected.status],
+    }).eq('id', selected.dbId).select().single()
+    setAssignmentBusy(false)
+    if (error) {
+      setUpdateError(error.message)
+      return
+    }
+    setTickets((all) => all.map((ticket) => ticket.dbId === selected.dbId
+      ? { ...ticket, technicianId: data.technician_id || '', assignee: assignedTech?.full_name || '', status: statusLabels[data.status] || ticket.status }
+      : ticket))
   }
   const escalate = async (note) => {
     if (!selected) return
@@ -601,11 +649,13 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
 
   return <>
     <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : activePage === 'map' ? 'Repérez les équipements par zone et par bureau.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
-    <nav className="technician-page-tabs" role="tablist" aria-label="Pages technicien">
+    <nav className={`technician-page-tabs ${isManager ? 'manager-page-tabs' : ''}`} role="tablist" aria-label={isManager ? 'Pages responsable IT' : 'Pages technicien'}>
+      {isManager && <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected={activePage === 'overview'} className={activePage === 'overview' ? 'active' : ''} onClick={() => setActivePage('overview')}>Vue manager</button>}
       <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
       <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
     </nav>
+    {isManager && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
@@ -613,39 +663,151 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
     {activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
       <section className="card queue-card">
         <div className="card-heading"><span className="heading-icon">≡</span><div><p className="eyebrow">VUE D’ENSEMBLE</p><h2>File d’intervention</h2></div></div>
+        <label className="ticket-search"><span aria-hidden="true">⌕</span><input type="search" value={ticketQuery} onChange={(event) => setTicketQuery(event.target.value)} placeholder="Référence, demandeur, équipement…" aria-label="Rechercher des interventions" /></label>
+        <div className="ticket-advanced-filter"><label htmlFor="ticket-department-filter">Département</label><select id="ticket-department-filter" value={departmentFilter} onChange={(event) => setDepartmentFilter(event.target.value)}><option value="Tous">Tous les départements</option>{departments.map((department) => <option key={department}>{department}</option>)}</select></div>
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu', 'Annulé'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => setSelectedId(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} />}
+      {selected && <Detail ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} technicians={technicians} assignmentId={assignmentId} setAssignmentId={setAssignmentId} assignTicket={assignTicket} assignmentBusy={assignmentBusy} />}
     </section>}
   </>
 }
 
+function ManagerOverview({ tickets, technicians, onOpenTickets }) {
+  const active = tickets.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status))
+  const unassigned = active.filter((ticket) => !ticket.technicianId)
+  const urgent = active.filter((ticket) => ticket.urgency === 'Haute')
+  const overdue = active.filter((ticket) => Date.now() - new Date(ticket.createdAtRaw).getTime() > 48 * 60 * 60 * 1000)
+  return <section className="manager-overview">
+    <div className="manager-metrics">
+      <article><small>INCIDENTS ACTIFS</small><b>{active.length}</b><span>Demandes en cours de traitement</span></article>
+      <article><small>À ATTRIBUER</small><b>{unassigned.length}</b><span>Demandes sans technicien</span></article>
+      <article><small>PRIORITÉ HAUTE</small><b>{urgent.length}</b><span>Incidents actifs prioritaires</span></article>
+      <article><small>PLUS DE 48 H</small><b>{overdue.length}</b><span>À examiner en priorité</span></article>
+    </div>
+    <div className="manager-overview-grid">
+      <section className="card manager-workload"><div className="card-heading"><span className="heading-icon">◉</span><div><p className="eyebrow">RÉPARTITION DE LA CHARGE</p><h2>Incidents par technicien</h2></div></div>
+        <div className="manager-workload-head"><span>ÉQUIPE</span><span>ACTIFS</span><span>RÉSOLUS</span></div>
+        {technicians.length ? technicians.map((person) => {
+          const assigned = tickets.filter((ticket) => ticket.technicianId === person.id)
+          const activeCount = assigned.filter((ticket) => !['Résolu', 'Clôturé', 'Annulé'].includes(ticket.status)).length
+          const resolvedCount = assigned.filter((ticket) => ['Résolu', 'Clôturé'].includes(ticket.status)).length
+          return <div className="manager-workload-row" key={person.id}><span>{person.full_name}<small>{person.role === 'it_manager' ? 'Responsable IT' : person.role === 'admin' ? 'Admin' : 'Technicien'}</small></span><b>{activeCount}</b><b className="manager-workload-resolved">{resolvedCount}</b></div>
+        }) : <p className="empty">Aucun technicien disponible. Vérifiez que les comptes de l’équipe ont le rôle « technician ».</p>}
+      </section>
+      <section className="card manager-attention"><div className="card-heading"><span className="heading-icon heading-icon-soft">!</span><div><p className="eyebrow">SUIVI RECOMMANDÉ</p><h2>Demandes à surveiller</h2></div></div>
+        {[...overdue, ...unassigned.filter((ticket) => !overdue.includes(ticket))].slice(0, 5).map((ticket) => <button type="button" className="manager-attention-row" key={ticket.dbId} onClick={onOpenTickets}><span><b>{ticket.id}</b><small>{getAsset(ticket.assetId)[1]} · {ticket.reporter}</small></span><Status status={ticket.status} /></button>)}
+        {!overdue.length && !unassigned.length && <p className="empty">Aucune demande ne nécessite d’attention immédiate.</p>}
+        <button type="button" className="manager-all-tickets" onClick={onOpenTickets}>Ouvrir la file d’intervention <span aria-hidden="true">→</span></button>
+      </section>
+    </div>
+  </section>
+}
+
 function FacilityMap({ tickets }) {
   const [selectedAssetId, setSelectedAssetId] = useState(null)
+  const [mapAssets, setMapAssets] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem('facility-map-assets') || '[]')
+      const byId = new Map(saved.map((asset) => [asset[0], asset]))
+      return [...assets.map((asset) => byId.get(asset[0]) || asset), ...saved.filter((asset) => !assets.some((base) => base[0] === asset[0]))]
+    } catch { return assets }
+  })
+  const [positions, setPositions] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('facility-map-positions') || '{}') } catch { return {} }
+  })
+  const [is3d, setIs3d] = useState(false)
+  const [mapZoom, setMapZoom] = useState(1)
+  const mapPointers = useRef(new Map())
+  const pinchStart = useRef(null)
+  const draggedAsset = useRef(null)
+  const [addingAsset, setAddingAsset] = useState(false)
+  const [newAsset, setNewAsset] = useState({ id: '', name: '', department: 'Infrastructure', location: '' })
   const getZone = (location) => {
     const text = location.toLocaleLowerCase('fr')
-    if (text.includes('2e')) return '2e étage'
-    if (text.includes('1er')) return '1er étage'
-    if (text.includes('entrep')) return 'Entrepôt'
+    if (text.includes('2e')) return '2e ?tage'
+    if (text.includes('1er')) return '1er ?tage'
+    if (text.includes('entrep')) return 'Entrep?t'
     if (text.includes('atelier')) return 'Atelier'
-    return 'Rez-de-chaussée'
+    return 'Rez-de-chauss?e'
   }
-  const zones = [...new Set(assets.map((asset) => getZone(asset[3])))]
-  const selectedAsset = selectedAssetId ? getAsset(selectedAssetId) : null
+  const zones = [...new Set(mapAssets.map((asset) => getZone(asset[3])))]
+  const selectedAsset = mapAssets.find((asset) => asset[0] === selectedAssetId)
   const pointsByZone = [[[54, 46], [61, 50], [58, 56]], [[78, 62], [84, 70], [80, 76]], [[26, 78], [32, 84], [38, 77], [43, 82]], [[55, 61], [62, 58], [68, 64], [72, 56]], [[82, 34], [88, 40]]]
   const markerPosition = (asset, index) => {
+    if (positions[asset[0]]) return { left: `${positions[asset[0]].x}%`, top: `${positions[asset[0]].y}%` }
     const zoneIndex = zones.indexOf(getZone(asset[3]))
     const points = pointsByZone[zoneIndex] || pointsByZone[0]
     const [left, top] = points[index % points.length]
     return { left: `${left}%`, top: `${top}%` }
   }
+  const setAssetPosition = (event, id) => {
+    const bounds = event.currentTarget.closest('.facility-plan-image').getBoundingClientRect()
+    const x = Math.min(97, Math.max(3, ((event.clientX - bounds.left) / bounds.width) * 100))
+    const y = Math.min(94, Math.max(6, ((event.clientY - bounds.top) / bounds.height) * 100))
+    setPositions((current) => {
+      const next = { ...current, [id]: { x, y } }
+      localStorage.setItem('facility-map-positions', JSON.stringify(next))
+      return next
+    })
+  }
+  const handleMapPointerDown = (event) => {
+    mapPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (mapPointers.current.size === 2) {
+      const [a, b] = [...mapPointers.current.values()]
+      pinchStart.current = { distance: Math.hypot(a.x - b.x, a.y - b.y), zoom: mapZoom }
+      draggedAsset.current = null
+    }
+  }
+  const handleMapPointerMove = (event) => {
+    if (!mapPointers.current.has(event.pointerId)) return
+    mapPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
+    if (mapPointers.current.size >= 2 && pinchStart.current) {
+      const [a, b] = [...mapPointers.current.values()]
+      const distance = Math.hypot(a.x - b.x, a.y - b.y)
+      setMapZoom(Math.min(2, Math.max(0.75, pinchStart.current.zoom * distance / Math.max(1, pinchStart.current.distance))))
+      event.preventDefault()
+    } else if (draggedAsset.current?.pointerId === event.pointerId) {
+      setAssetPosition(event, draggedAsset.current.id)
+      event.preventDefault()
+    }
+  }
+  const handleMapPointerEnd = (event) => {
+    mapPointers.current.delete(event.pointerId)
+    if (mapPointers.current.size < 2) pinchStart.current = null
+    if (draggedAsset.current?.pointerId === event.pointerId) draggedAsset.current = null
+  }
+  const saveLocation = (location) => setMapAssets((current) => {
+    const next = current.map((asset) => asset[0] === selectedAssetId ? [asset[0], asset[1], asset[2], location] : asset)
+    localStorage.setItem('facility-map-assets', JSON.stringify(next.filter((asset) => !assets.some((base) => base[0] === asset[0]) || assets.some((base) => base[0] === asset[0] && base[3] !== asset[3]))))
+    return next
+  })
+  const addAsset = (event) => {
+    event.preventDefault()
+    const id = newAsset.id.trim().toUpperCase()
+    if (!id || !newAsset.name.trim() || !newAsset.location.trim() || mapAssets.some((asset) => asset[0] === id)) return
+    const added = [id, newAsset.name.trim(), newAsset.department, newAsset.location.trim()]
+    const next = [...mapAssets, added]
+    setMapAssets(next)
+    localStorage.setItem('facility-map-assets', JSON.stringify(next.filter((asset) => !assets.some((base) => base[0] === asset[0]) || assets.some((base) => base[0] === asset[0] && base[3] !== asset[3]))))
+    setPositions((current) => {
+      const updated = { ...current, [id]: { x: 50, y: 50 } }
+      localStorage.setItem('facility-map-positions', JSON.stringify(updated))
+      return updated
+    })
+    setSelectedAssetId(id)
+    setNewAsset({ id: '', name: '', department: 'Infrastructure', location: '' })
+    setAddingAsset(false)
+  }
   return <section className="facility-map card">
+    <div className="facility-map-heading"><div><p className="eyebrow">PLAN INTERACTIF</p><h2>Carte du site</h2><p>{'D\u00e9placez les \u00e9quipements pour les repositionner sur le plan.'}</p></div><div className="facility-map-actions"><div className="map-zoom-controls" aria-label="Zoom"><button type="button" onClick={() => setMapZoom((zoom) => Math.max(0.75, +(zoom - 0.25).toFixed(2)))} aria-label="Zoom arriere" disabled={mapZoom <= 0.75}>-</button><span>{Math.round(mapZoom * 100)}%</span><button type="button" onClick={() => setMapZoom((zoom) => Math.min(2, +(zoom + 0.25).toFixed(2)))} aria-label="Zoom avant" disabled={mapZoom >= 2}>+</button><button type="button" onClick={() => setMapZoom(1)} aria-label="Reinitialiser le zoom">{'R\u00e9initialiser'}</button></div><button type="button" className={is3d ? 'active' : ''} onClick={() => setIs3d((value) => !value)}>{is3d ? 'Vue 2D' : 'Vue 3D'}</button><button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un &eacute;quipement</button></div></div>
+    {addingAsset && <form className="map-asset-form" onSubmit={addAsset}><input required placeholder="R&#233;f&#233;rence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required placeholder="Nom de l&apos;&#233;quipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><select value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })}>{departments.map((item) => <option key={item}>{item}</option>)}</select><input required placeholder="Emplacement (b&#226;timent, &#233;tage, bureau)" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit">Ajouter sur le plan</button></form>}
     <div className="facility-plan">
-      <div className="facility-plan-image"><img src={officeFloorplan} alt="Illustrated overhead view of an office with desks and rooms" />
-        {assets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['Résolu', 'Clôturé', 'Annulé'].includes(ticket.status)); return <button type="button" className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} · ${asset[3]}`} aria-label={asset[1]}>{index + 1}</button> })}
+      <div className={`facility-plan-image ${is3d ? 'map-view-3d' : ''}`} style={{ '--map-zoom': mapZoom }} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerEnd} onPointerCancel={handleMapPointerEnd}>
+        <img src={officeFloorplan} alt="Illustrated overhead view of an office with desks and rooms" />
+        {mapAssets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)); return <button type="button" onPointerDown={(event) => { if (mapPointers.current.size > 1) return; if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); draggedAsset.current = { id: asset[0], pointerId: event.pointerId } }} className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} - ${asset[3]}`} aria-label={`${asset[1]}, glissez pour deplacer`}>{index + 1}</button> })}
       </div>
-      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} · {selectedAsset[2]} · {selectedAsset[3]}</small></section>}
+      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span>Equipement selectionne</span></div><label className="map-location-edit">Emplacement<input value={selectedAsset[3]} onChange={(event) => saveLocation(event.target.value)} aria-label="Modifier l&apos;emplacement de l&apos;&#233;quipement" /></label></section>}
     </div>
   </section>
 }
@@ -770,7 +932,7 @@ function TicketAnalytics({ tickets }) {
     <p className="stats-footnote">Le volume et les répartitions utilisent la date de création; le délai médian utilise la date de résolution. Les tickets historiques sans date de résolution sont exclus du calcul.</p>
   </div>
 }
-function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, updateError }) {
+function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
   const [note, setNote] = useState(ticket.note)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
   const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
@@ -821,6 +983,7 @@ function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, upda
     <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
+    {user.role === 'it_manager' && !['Annulé', 'Résolu', 'Clôturé'].includes(ticket.status) && <section className="manager-assignment"><p className="eyebrow">ATTRIBUTION DE L’INCIDENT</p><div><select value={assignmentId} onChange={(event) => setAssignmentId(event.target.value)} aria-label="Attribuer à un technicien"><option value="">Non attribué</option>{technicians.map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}</select><button type="button" onClick={assignTicket} disabled={assignmentBusy}>{assignmentBusy ? 'Enregistrement…' : 'Enregistrer'}</button></div></section>}
     {ticket.status === 'Annulé'
       ? <Notice title="Demande annulée" text="L’employé a annulé cette demande avant sa prise en charge." />
       : ticket.status === 'Résolu'
@@ -938,8 +1101,8 @@ function TicketChat({ ticket, user, startOpen = false, hideLauncher = false, onC
     setSending(false)
   }
 
-  return <div className={`ticket-chat-wrap ${user.role === 'technician' && !hideLauncher ? 'technician-chat-wrap' : ''}`}>
-    {!hideLauncher && (user.role === 'technician'
+  return <div className={`ticket-chat-wrap ${user.role !== 'employee' && !hideLauncher ? 'technician-chat-wrap' : ''}`}>
+    {!hideLauncher && (user.role !== 'employee'
       ? <section className="technician-chat-prompt"><span className="technician-chat-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H6l-3 2v-6.5A7.5 7.5 0 1 1 20 11.5Z" /><path d="M8 11h8M8 14h5" /></svg></span><span className="technician-chat-copy"><small>MESSAGERIE EMPLOYÉ</small><b>Échanger avec {ticket.reporter}</b><span>Demandez des précisions ou informez l’employé de l’avancement.</span></span><button type="button" className="technician-chat-action" onClick={openChat}>Envoyer un message <span aria-hidden="true">→</span></button></section>
       : <button type="button" className="ticket-chat-open" onClick={openChat}><span aria-hidden="true">▣</span> Écrire à l’équipe IT <span className="chat-open-arrow" aria-hidden="true">→</span></button>)}
     {open && <div className="messenger-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) closeChat() }}>
@@ -1162,7 +1325,7 @@ function Header({ user, logout, notifications, setNotifications }) {
     <header className="app-header">
       <Brand />
       <div className="header-user">
-        <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : 'Technicien'}</b></div>
+        <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
         <div className="notification-wrap">
           <button className="notification-button" onClick={() => setOpen(!open)} aria-label={`Notifications${unread ? `, ${unread} non lues` : ''}`} aria-expanded={open}>
             <span aria-hidden="true">🔔</span>{unread > 0 && <i>{unread > 9 ? '9+' : unread}</i>}
@@ -1175,7 +1338,7 @@ function Header({ user, logout, notifications, setNotifications }) {
         <div className="header-profile">
           <button className="avatar" onClick={() => setProfileOpen((value) => !value)} title="Voir mon profil" aria-label="Voir mon profil" aria-expanded={profileOpen} aria-haspopup="dialog">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button>
           {profileOpen && <section className="profile-card" role="dialog" aria-label="Informations du profil">
-            <div className="profile-card-head"><span className="profile-card-avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><b>{user.name}</b><small>{user.role === 'employee' ? 'Employé' : 'Technicien'}</small></div></div>
+            <div className="profile-card-head"><span className="profile-card-avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><b>{user.name}</b><small>{user.role === 'employee' ? 'Employé' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</small></div></div>
             <div className="profile-card-info"><small>ADRESSE E-MAIL</small><b>{user.email || 'Non renseignée'}</b></div>
             <button type="button" className="profile-card-logout" onClick={logout}>Se déconnecter <span aria-hidden="true">↗</span></button>
           </section>}

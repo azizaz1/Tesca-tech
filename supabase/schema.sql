@@ -1,5 +1,5 @@
 -- Run this once in Supabase: SQL Editor > New query > Run.
-create type public.user_role as enum ('employee', 'technician', 'admin');
+create type public.user_role as enum ('employee', 'technician', 'it_manager', 'admin');
 create type public.ticket_status as enum ('open', 'assigned', 'in_progress', 'waiting_parts', 'resolved', 'closed', 'reopened', 'cancelled');
 create type public.ticket_priority as enum ('normal', 'high');
 
@@ -39,8 +39,8 @@ create policy "read own profile" on public.profiles for select to authenticated 
 create policy "read assets" on public.assets for select to authenticated using (true);
 create policy "employees create tickets" on public.tickets for insert to authenticated with check (reporter_id = auth.uid());
 create policy "employees read own tickets" on public.tickets for select to authenticated using (reporter_id = auth.uid());
-create policy "technicians read tickets" on public.tickets for select to authenticated using ((select role from public.profiles where id = auth.uid()) in ('technician', 'admin'));
-create policy "technicians update tickets" on public.tickets for update to authenticated using ((select role from public.profiles where id = auth.uid()) in ('technician', 'admin')) with check ((select role from public.profiles where id = auth.uid()) in ('technician', 'admin'));
+create policy "technicians read tickets" on public.tickets for select to authenticated using ((select role from public.profiles where id = auth.uid()) in ('technician', 'it_manager', 'admin'));
+create policy "technicians update tickets" on public.tickets for update to authenticated using ((select role from public.profiles where id = auth.uid()) in ('technician', 'it_manager', 'admin')) with check ((select role from public.profiles where id = auth.uid()) in ('technician', 'it_manager', 'admin'));
 
 insert into public.assets (id, name, kind, department, location) values
 ('PC-FIN-014', 'Poste comptable', 'PC fixe', 'Finance', '2e étage · Bureau 204'),
