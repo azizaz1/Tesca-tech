@@ -637,7 +637,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   }, [selectedId])
   const selectTicket = (ticketId) => {
     scrollToDetailOnMobile.current = true
-    if (window.matchMedia('(max-width: 680px)').matches) setMobileDetailOpen(true)
+    if (Capacitor.isNativePlatform() && window.matchMedia('(max-width: 680px)').matches) setMobileDetailOpen(true)
     setSelectedId(ticketId)
   }
   const returnToQueue = () => {
@@ -760,7 +760,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu', 'Annulé'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => selectTicket(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small><SlaIndicator ticket={ticket} compact /></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail detailRef={detailRef} onBackToQueue={returnToQueue} ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} technicians={technicians} assignmentId={assignmentId} setAssignmentId={setAssignmentId} assignTicket={assignTicket} assignmentBusy={assignmentBusy} />}
+      {selected && <Detail detailRef={detailRef} onBackToQueue={returnToQueue} showMobileBack={Capacitor.isNativePlatform()} ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} technicians={technicians} assignmentId={assignmentId} setAssignmentId={setAssignmentId} assignTicket={assignTicket} assignmentBusy={assignmentBusy} />}
     </section>}
   </>
 }
@@ -1145,7 +1145,7 @@ function TicketAnalytics({ tickets }) {
     <p className="stats-footnote">Le volume et les répartitions utilisent la date de création; le délai médian utilise la date de résolution. Les tickets historiques sans date de résolution sont exclus du calcul.</p>
   </div>
 }
-function Detail({ detailRef, onBackToQueue, ticket, user, onOpenChat, update, escalate, savePlaybook, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
+function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user, onOpenChat, update, escalate, savePlaybook, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
   const [note, setNote] = useState(ticket.note)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
   const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
@@ -1179,7 +1179,7 @@ function Detail({ detailRef, onBackToQueue, ticket, user, onOpenChat, update, es
   }
   const asset = getAsset(ticket.assetId)
   return <section ref={detailRef} className="card detail-card">
-    <button type="button" className="mobile-detail-back" onClick={onBackToQueue}>← Retour à la file</button>
+    {showMobileBack && <button type="button" className="mobile-detail-back" onClick={onBackToQueue}>← Retour à la file</button>}
     {updateError && <p className="form-message" role="alert">{updateError}</p>}
     <div className="detail-head"><div><p className="eyebrow">FICHE D’INTERVENTION <span className="reference">{ticket.id}</span></p><h2>{asset[1]}</h2><p className="subtle small">{asset[0]} <span>·</span> {asset[3]}</p></div><Status status={ticket.status} /></div>
     <div className="alert"><span className="alert-symbol">{ticket.level}</span><div><strong>Technicien niveau {ticket.level}</strong><p>{ticket.level < 3 ? `Si le problème n’est pas résolu, escaladez au niveau ${ticket.level + 1}.` : 'Niveau maximum atteint.'}</p></div></div>
