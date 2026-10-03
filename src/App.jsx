@@ -213,6 +213,33 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    let active = true
+    const refreshBrand = async () => {
+      const { data, error } = await supabase.from('company_settings').select('company_name, logo_path').eq('id', true).maybeSingle()
+      if (!active || error || !data) return
+      const logoUrl = data.logo_path ? supabase.storage.from('company-branding').getPublicUrl(data.logo_path).data.publicUrl : ''
+      setBrand({ companyName: data.company_name || defaultBrand.companyName, logoPath: data.logo_path || '', logoUrl })
+    }
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === 'visible') void refreshBrand()
+    }
+    void refreshBrand()
+    const channel = supabase.channel('company-branding-settings')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'company_settings' }, () => void refreshBrand())
+      .subscribe()
+    const timer = window.setInterval(() => void refreshBrand(), 60000)
+    window.addEventListener('focus', refreshBrand)
+    document.addEventListener('visibilitychange', refreshWhenVisible)
+    return () => {
+      active = false
+      window.clearInterval(timer)
+      window.removeEventListener('focus', refreshBrand)
+      document.removeEventListener('visibilitychange', refreshWhenVisible)
+      void supabase.removeChannel(channel)
+    }
+  }, [])
+
+  useEffect(() => {
     if (!user) {
       setNotifications([])
       return undefined
@@ -776,21 +803,6 @@ function ManagerOverview({ tickets, technicians, onOpenTickets, isAdmin = false 
     return () => window.clearInterval(timer)
   }, [])
 
-  useEffect(() => {
-    let active = true
-    const refreshBrand = async () => {
-      const { data } = await supabase.from('company_settings').select('company_name, logo_path').eq('id', true).maybeSingle()
-      if (!active || !data) return
-      const logoUrl = data.logo_path ? supabase.storage.from('company-branding').getPublicUrl(data.logo_path).data.publicUrl : ''
-      setBrand({ companyName: data.company_name || defaultBrand.companyName, logoPath: data.logo_path || '', logoUrl })
-    }
-    void refreshBrand()
-    const channel = supabase.channel('company-branding-settings').on('postgres_changes', { event: '*', schema: 'public', table: 'company_settings' }, () => void refreshBrand()).subscribe()
-    return () => {
-      active = false
-      void supabase.removeChannel(channel)
-    }
-  }, [])
   const active = tickets.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status))
   const unassigned = active.filter((ticket) => !ticket.technicianId)
   const urgent = active.filter((ticket) => ticket.urgency === 'Haute')
