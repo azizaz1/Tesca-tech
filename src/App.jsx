@@ -28,6 +28,7 @@ const assets = [
 const departments = [...new Set(assets.map((asset) => asset[2]))]
 
 const getAsset = (id) => assets.find((asset) => asset[0] === id) || assets[0]
+const defaultBrand = { companyName: 'Tesca Tech', logoPath: '', logoUrl: '' }
 const playResolutionSound = async () => {
   const AudioContextClass = window.AudioContext || window.webkitAudioContext
   if (!AudioContextClass) return
@@ -190,6 +191,7 @@ const readTickets = async (role) => {
 
 export default function App() {
   const [user, setUser] = useState(null)
+  const [brand, setBrand] = useState(defaultBrand)
   const [tickets, setTickets] = useState([])
   const [ticketError, setTicketError] = useState('')
   const [notifications, setNotifications] = useState([])
@@ -303,11 +305,11 @@ export default function App() {
   }, [user])
 
   return user
-    ? <Portal user={user} tickets={tickets} setTickets={setTickets} ticketError={ticketError} notifications={notifications} setNotifications={setNotifications} logout={() => supabase.auth.signOut()} />
-    : <Login />
+    ? <Portal user={user} tickets={tickets} setTickets={setTickets} ticketError={ticketError} notifications={notifications} setNotifications={setNotifications} logout={() => supabase.auth.signOut()} brand={brand} onBrandChanged={setBrand} />
+    : <Login brand={brand} />
 }
 
-function Login() {
+function Login({ brand }) {
   const [signup, setSignup] = useState(false)
   const [name, setName] = useState('')
   const [email, setEmail] = useState('')
@@ -336,20 +338,20 @@ function Login() {
   return (
     <main className="auth-page">
       <div className="auth-layout">
-        <section className="auth-showcase" aria-label="Tesca Tech">
-          <div className="showcase-top"><Brand light /><span className="showcase-tag">SUPPORT INFORMATIQUE</span></div>
+        <section className="auth-showcase" aria-label={brand.companyName}>
+          <div className="showcase-top"><Brand light settings={brand} /><span className="showcase-tag">SUPPORT INFORMATIQUE</span></div>
           <div className="showcase-copy">
-            <div className="logo-tile"><img src={tescaLogo} alt="Logo Tesca Group" /></div>
+            <div className="logo-tile"><img src={brand.logoUrl || tescaLogo} alt={`Logo ${brand.companyName}`} /></div>
             <p className="showcase-kicker">SUPPORT INFORMATIQUE · MATÉRIEL</p>
             <h2>Votre matériel<br />repart du bon pied.</h2>
             <p className="showcase-description">Signalez une panne, retrouvez vos demandes et suivez chaque intervention jusqu’à la résolution.</p>
           </div>
-          <div className="showcase-foot"><span className="status-dot" /> Votre équipe IT, toujours à vos côtés <span className="foot-year">TESCA GROUP</span></div>
+          <div className="showcase-foot"><span className="status-dot" /> Votre équipe IT, toujours à vos côtés <span className="foot-year">{brand.companyName.toLocaleUpperCase('fr')}</span></div>
           <div className="showcase-orb orb-one" /><div className="showcase-orb orb-two" />
         </section>
 
         <section className="auth-panel">
-          <div className="mobile-brand"><span className="mobile-logo"><img src={tescaLogo} alt="" /></span><span className="mobile-brand-copy"><b>Tesca <i>Tech</i></b><small>SUPPORT INFORMATIQUE</small></span><span className="mobile-secure"><span /> SÉCURISÉ</span></div>
+          <div className="mobile-brand"><span className="mobile-logo"><img src={brand.logoUrl || tescaLogo} alt="" /></span><span className="mobile-brand-copy"><b>{brand.companyName}</b><small>SUPPORT INFORMATIQUE</small></span><span className="mobile-secure"><span /> SÉCURISÉ</span></div>
           <div className="auth-content">
             <div className="auth-heading"><p className="eyebrow">{signup ? 'VOTRE ESPACE TESCA' : 'GESTION DES INCIDENTS MATÉRIELS'}</p><h1>{signup ? 'Créer mon compte' : 'Content de vous revoir'}<span className="auth-title-dot">.</span></h1><p className="subtle">{signup ? 'Renseignez vos informations pour commencer.' : 'Connectez-vous pour signaler une panne ou suivre vos demandes IT.'}</p></div>
             {!signup && <div className="auth-service-note"><span className="service-note-icon" aria-hidden="true">⌘</span><span><b>Un souci avec votre matériel&nbsp;?</b><small>PC · imprimante · réseau</small></span><span className="service-note-status"><i /> Support actif</span></div>}
@@ -370,18 +372,18 @@ function Login() {
   )
 }
 
-function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout }) {
+function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout, brand, onBrandChanged }) {
   const [activeChatTicket, setActiveChatTicket] = useState(null)
   return (
     <main className={`app-shell ${Capacitor.isNativePlatform() ? 'native-experience' : 'web-experience'}`}>
       <PushRegistration userId={user.id} />
-      <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} />
+      <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} brand={brand} />
       <ChatInbox user={user} tickets={tickets} selectedTicket={activeChatTicket} setSelectedTicket={setActiveChatTicket} />
       <div className="portal-content">
         {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
         {user.role === 'employee'
           ? <Employee user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} />
-          : <Technician user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} />}
+          : <Technician user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} brand={brand} onBrandChanged={onBrandChanged} />}
       </div>
     </main>
   )
@@ -610,7 +612,7 @@ function EmployeeHelpChat() {
   </aside>
 }
 
-function Technician({ user, tickets, setTickets, onOpenChat }) {
+function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChanged }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const queueRef = useRef(null)
@@ -734,20 +736,22 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
     return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
-  const welcomeLabel = isAdmin ? (activePage === 'overview' ? 'PILOTAGE ADMINISTRATEUR' : activePage === 'admin-users' ? 'ADMINISTRATION DES COMPTES' : 'ANALYSE DU SUPPORT') : isManager && activePage === 'overview' ? 'PILOTAGE IT' : isManager ? 'GESTION DES INCIDENTS' : activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'
-  const welcomeText = isAdmin ? (activePage === 'admin-users' ? 'Gérez les accès et les rôles des comptes de votre organisation.' : activePage === 'stats' ? 'Suivez le volume et les tendances de votre support informatique.' : 'Vue d’ensemble des incidents, des priorités et de la charge de l’équipe.') : isManager && activePage === 'overview' ? 'Suivez la charge, les priorités et les incidents à traiter.' : isManager ? 'Attribuez les demandes et coordonnez les interventions.' : 'Le tableau de bord de vos interventions.'
+  const welcomeLabel = isAdmin ? (activePage === 'overview' ? 'PILOTAGE ADMINISTRATEUR' : activePage === 'admin-users' ? 'ADMINISTRATION DES COMPTES' : activePage === 'branding' ? 'IDENTITÉ DE L’ENTREPRISE' : 'ANALYSE DU SUPPORT') : isManager && activePage === 'overview' ? 'PILOTAGE IT' : isManager ? 'GESTION DES INCIDENTS' : activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'
+  const welcomeText = isAdmin ? (activePage === 'admin-users' ? 'Gérez les accès et les rôles des comptes de votre organisation.' : activePage === 'branding' ? 'Personnalisez le nom et le logo visibles pour toute votre organisation.' : activePage === 'stats' ? 'Suivez le volume et les tendances de votre support informatique.' : 'Vue d’ensemble des incidents, des priorités et de la charge de l’équipe.') : isManager && activePage === 'overview' ? 'Suivez la charge, les priorités et les incidents à traiter.' : isManager ? 'Attribuez les demandes et coordonnez les interventions.' : 'Le tableau de bord de vos interventions.'
 
   return <>
     <Welcome label={welcomeLabel} name={user.name} text={welcomeText} className={activePage === 'stats' ? 'welcome-stats' : ''} />
     <nav className={`technician-page-tabs ${isManager ? 'manager-page-tabs' : ''} ${isAdmin ? 'admin-page-tabs' : ''}`} role="tablist" aria-label={isAdmin ? 'Pages administrateur' : isManager ? 'Pages responsable IT' : 'Pages technicien'}>
       {canManageTickets && <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected={activePage === 'overview'} className={activePage === 'overview' ? 'active' : ''} onClick={() => setActivePage('overview')}>{isAdmin ? 'Vue admin' : 'Vue manager'}</button>}
       {isAdmin && <button type="button" role="tab" id="tab-admin-users" aria-controls="panel-admin-users" aria-selected={activePage === 'admin-users'} className={activePage === 'admin-users' ? 'active' : ''} onClick={() => setActivePage('admin-users')}>Comptes</button>}
+      {isAdmin && <button type="button" role="tab" id="tab-admin-branding" aria-controls="panel-admin-branding" aria-selected={activePage === 'branding'} className={activePage === 'branding' ? 'active' : ''} onClick={() => setActivePage('branding')}>Identité</button>}
       {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
       {!isAdmin && <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>}
     </nav>
     {canManageTickets && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} isAdmin={isAdmin} /></div>}
     {isAdmin && activePage === 'admin-users' && <div role="tabpanel" id="panel-admin-users" aria-labelledby="tab-admin-users"><AdminUsers currentUserId={user.id} /></div>}
+    {isAdmin && activePage === 'branding' && <div role="tabpanel" id="panel-admin-branding" aria-labelledby="tab-admin-branding"><AdminBranding brand={brand} onBrandChanged={onBrandChanged} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
@@ -770,6 +774,22 @@ function ManagerOverview({ tickets, technicians, onOpenTickets, isAdmin = false 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000)
     return () => window.clearInterval(timer)
+  }, [])
+
+  useEffect(() => {
+    let active = true
+    const refreshBrand = async () => {
+      const { data } = await supabase.from('company_settings').select('company_name, logo_path').eq('id', true).maybeSingle()
+      if (!active || !data) return
+      const logoUrl = data.logo_path ? supabase.storage.from('company-branding').getPublicUrl(data.logo_path).data.publicUrl : ''
+      setBrand({ companyName: data.company_name || defaultBrand.companyName, logoPath: data.logo_path || '', logoUrl })
+    }
+    void refreshBrand()
+    const channel = supabase.channel('company-branding-settings').on('postgres_changes', { event: '*', schema: 'public', table: 'company_settings' }, () => void refreshBrand()).subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
   }, [])
   const active = tickets.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status))
   const unassigned = active.filter((ticket) => !ticket.technicianId)
@@ -911,6 +931,93 @@ function AdminUsers({ currentUserId }) {
     })}</div> : <p className="empty">Aucun compte ne correspond à ces filtres.</p>}
     </section>
   </div>
+}
+
+function AdminBranding({ brand, onBrandChanged }) {
+  const [companyName, setCompanyName] = useState(brand.companyName)
+  const [logoFile, setLogoFile] = useState(null)
+  const [previewUrl, setPreviewUrl] = useState('')
+  const [removeLogo, setRemoveLogo] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  useEffect(() => setCompanyName(brand.companyName), [brand.companyName])
+  useEffect(() => {
+    if (!logoFile) { setPreviewUrl(''); return undefined }
+    const url = URL.createObjectURL(logoFile)
+    setPreviewUrl(url)
+    return () => URL.revokeObjectURL(url)
+  }, [logoFile])
+
+  const onChooseLogo = (event) => {
+    const file = event.target.files?.[0]
+    setError('')
+    setMessage('')
+    if (!file) return
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setError('Choisissez une image PNG, JPG ou WebP.')
+      event.target.value = ''
+      return
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setError('Le logo ne peut pas dépasser 2 Mo.')
+      event.target.value = ''
+      return
+    }
+    setLogoFile(file)
+    setRemoveLogo(false)
+  }
+
+  const saveBrand = async (event) => {
+    event.preventDefault()
+    const trimmedName = companyName.trim()
+    if (!trimmedName) { setError('Saisissez le nom de l’entreprise.'); return }
+    setSaving(true)
+    setError('')
+    setMessage('')
+    let nextLogoPath = removeLogo ? null : brand.logoPath || null
+    let uploadedPath = ''
+    if (logoFile) {
+      const extension = logoFile.type === 'image/jpeg' ? 'jpg' : logoFile.type === 'image/png' ? 'png' : 'webp'
+      uploadedPath = `logos/${crypto.randomUUID()}.${extension}`
+      const { error: uploadError } = await supabase.storage.from('company-branding').upload(uploadedPath, logoFile, { contentType: logoFile.type, upsert: false })
+      if (uploadError) {
+        setSaving(false)
+        setError(uploadError.message)
+        return
+      }
+      nextLogoPath = uploadedPath
+    }
+    const { error: saveError } = await supabase.from('company_settings').update({ company_name: trimmedName, logo_path: nextLogoPath, updated_at: new Date().toISOString() }).eq('id', true)
+    if (saveError) {
+      if (uploadedPath) await supabase.storage.from('company-branding').remove([uploadedPath])
+      setSaving(false)
+      setError(saveError.message)
+      return
+    }
+    if (brand.logoPath && brand.logoPath !== nextLogoPath) await supabase.storage.from('company-branding').remove([brand.logoPath])
+    const logoUrl = nextLogoPath ? supabase.storage.from('company-branding').getPublicUrl(nextLogoPath).data.publicUrl : ''
+    onBrandChanged({ companyName: trimmedName, logoPath: nextLogoPath || '', logoUrl })
+    setLogoFile(null)
+    setRemoveLogo(false)
+    setSaving(false)
+    setMessage('L’identité de l’entreprise a été mise à jour pour tous les utilisateurs.')
+  }
+
+  const shownLogo = previewUrl || (removeLogo ? '' : brand.logoUrl)
+  return <section className="card admin-branding-card">
+    <div className="card-heading"><span className="heading-icon">✳</span><div><p className="eyebrow">MARQUE PARTAGÉE</p><h2>Identité de l’entreprise</h2></div></div>
+    <p className="card-intro">Le nom et le logo s’affichent sur l’écran de connexion et dans l’en-tête pour tous les comptes.</p>
+    <form className="admin-branding-form" onSubmit={saveBrand}>
+      <div className="branding-preview"><span className="branding-preview-logo">{shownLogo ? <img src={shownLogo} alt="Aperçu du logo" /> : <span>{companyName.slice(0, 1).toUpperCase()}</span>}</span><div><small>APERÇU DE LA MARQUE</small><b>{companyName || 'Nom de l’entreprise'}</b><span>Portail de support informatique</span></div></div>
+      <label className="field">Nom de l’entreprise<input value={companyName} maxLength={80} onChange={(event) => { setCompanyName(event.target.value); setMessage('') }} placeholder="Ex. Tesca Tech" /></label>
+      <label className="field">Logo de l’entreprise<input type="file" accept="image/png,image/jpeg,image/webp" onChange={onChooseLogo} /><small className="branding-file-help">PNG, JPG ou WebP · 2 Mo maximum · format carré recommandé</small></label>
+      {(brand.logoUrl || logoFile) && <button className="branding-remove-logo" type="button" onClick={() => { setLogoFile(null); setRemoveLogo(true); setMessage('') }}>Retirer le logo personnalisé</button>}
+      {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="admin-role-success" role="status">{message}</p>}
+      <button className="primary-action branding-save" type="submit" disabled={saving}>{saving ? 'Enregistrement…' : 'Enregistrer l’identité'} <span aria-hidden="true">→</span></button>
+    </form>
+  </section>
 }
 
 function FacilityMap({ tickets }) {
@@ -1542,11 +1649,11 @@ function Welcome({ label, name, text, className = '' }) {
   return <section className={`welcome ${className}`}><div><p className="eyebrow">{label}</p><h1>Bonjour, {name.split(' ')[0]}<span className="hello-dot">.</span></h1><p className="subtle">{text}</p></div><div className="welcome-art" aria-hidden="true"><span className="welcome-art-line" /><span className="welcome-art-orb">✳</span><small>TESCA<br />SUPPORT</small></div></section>
 }
 
-function Brand({ light = false }) {
-  return <div className={`brand ${light ? 'brand-light' : ''}`}><span className="brand-mark">t</span><span className="brand-word">tesca<span>.tech</span></span></div>
+function Brand({ light = false, settings = defaultBrand }) {
+  return <div className={`brand ${light ? 'brand-light' : ''}`}><span className={`brand-mark${settings.logoUrl ? ' brand-mark-image' : ''}`}>{settings.logoUrl ? <img src={settings.logoUrl} alt="" /> : settings.companyName.slice(0, 1).toLowerCase()}</span><span className="brand-word">{settings.companyName}</span></div>
 }
 
-function Header({ user, logout, notifications, setNotifications }) {
+function Header({ user, logout, notifications, setNotifications, brand }) {
   const [open, setOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const unread = notifications.filter((item) => !item.read).length
@@ -1566,7 +1673,7 @@ function Header({ user, logout, notifications, setNotifications }) {
   }
   return (
     <header className="app-header">
-      <Brand />
+      <Brand settings={brand} />
       <div className="header-user">
         <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'admin' ? 'Admin' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
         <div className="notification-wrap">
