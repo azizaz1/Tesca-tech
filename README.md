@@ -1,5 +1,7 @@
 # Tesca Tech
 
+[Open the live app](https://tesca-tech.vercel.app)
+
 A French-language IT support portal for reporting and tracking equipment incidents. The app is built with React and Vite, uses Supabase Auth for sign-in, and includes a Capacitor Android project.
 
 ## Requirements
