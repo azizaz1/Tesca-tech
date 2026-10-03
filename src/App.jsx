@@ -549,18 +549,20 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   const [filter, setFilter] = useState('Tous')
   const [ticketQuery, setTicketQuery] = useState('')
   const [departmentFilter, setDepartmentFilter] = useState('Tous')
-  const [activePage, setActivePage] = useState(user.role === 'it_manager' ? 'overview' : 'map')
+  const [activePage, setActivePage] = useState(user.role === 'it_manager' || user.role === 'admin' ? 'overview' : 'map')
   const [updateError, setUpdateError] = useState('')
   const [technicians, setTechnicians] = useState([])
   const [assignmentId, setAssignmentId] = useState('')
   const [assignmentBusy, setAssignmentBusy] = useState(false)
   const isManager = user.role === 'it_manager'
+  const isAdmin = user.role === 'admin'
+  const canManageTickets = isManager || isAdmin
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   useEffect(() => {
-    if (!isManager) return
+    if (!canManageTickets) return
     supabase.from('profiles').select('id, full_name, role').in('role', ['technician', 'it_manager', 'admin']).order('full_name')
       .then(({ data, error }) => error ? setUpdateError(error.message) : setTechnicians(data || []))
-  }, [isManager])
+  }, [canManageTickets])
   useEffect(() => setAssignmentId(selected?.technicianId || ''), [selected?.dbId, selected?.technicianId])
   const normalizedQuery = ticketQuery.trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   const shown = tickets.filter((ticket) => {
@@ -577,7 +579,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
       status: dbStatus[status],
       technician_note: note,
       technician_level: level,
-      technician_id: status === 'Ouvert' ? null : isManager ? (selected.technicianId || user.id) : user.id,
+      technician_id: status === 'Ouvert' ? null : canManageTickets ? (selected.technicianId || user.id) : user.id,
     }).eq('id', selected.dbId).select().single()
     if (error) {
       setUpdateError(error.message)
@@ -589,7 +591,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
     return true
   }
   const assignTicket = async () => {
-    if (!selected || !isManager) return
+    if (!selected || !canManageTickets) return
     setAssignmentBusy(true)
     setUpdateError('')
     const assignedTech = technicians.find((person) => person.id === assignmentId)
@@ -646,21 +648,25 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
     return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
+  const welcomeLabel = isAdmin ? (activePage === 'overview' ? 'PILOTAGE ADMINISTRATEUR' : activePage === 'admin-users' ? 'ADMINISTRATION DES COMPTES' : 'ANALYSE DU SUPPORT') : isManager && activePage === 'overview' ? 'PILOTAGE IT' : isManager ? 'GESTION DES INCIDENTS' : activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'
+  const welcomeText = isAdmin ? (activePage === 'admin-users' ? 'Gérez les accès et les rôles des comptes de votre organisation.' : activePage === 'stats' ? 'Suivez le volume et les tendances de votre support informatique.' : 'Vue d’ensemble des incidents, des priorités et de la charge de l’équipe.') : isManager && activePage === 'overview' ? 'Suivez la charge, les priorités et les incidents à traiter.' : isManager ? 'Attribuez les demandes et coordonnez les interventions.' : 'Le tableau de bord de vos interventions.'
 
   return <>
-    <Welcome label={activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'} name={user.name} text={activePage === 'stats' ? 'Incidents par machine, d\u00e9partement et priorit\u00e9.' : activePage === 'map' ? 'Repérez les équipements par zone et par bureau.' : 'Le tableau de bord de vos interventions.'} className={activePage === 'stats' ? 'welcome-stats' : ''} />
-    <nav className={`technician-page-tabs ${isManager ? 'manager-page-tabs' : ''}`} role="tablist" aria-label={isManager ? 'Pages responsable IT' : 'Pages technicien'}>
-      {isManager && <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected={activePage === 'overview'} className={activePage === 'overview' ? 'active' : ''} onClick={() => setActivePage('overview')}>Vue manager</button>}
-      <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>
+    <Welcome label={welcomeLabel} name={user.name} text={welcomeText} className={activePage === 'stats' ? 'welcome-stats' : ''} />
+    <nav className={`technician-page-tabs ${isManager ? 'manager-page-tabs' : ''} ${isAdmin ? 'admin-page-tabs' : ''}`} role="tablist" aria-label={isAdmin ? 'Pages administrateur' : isManager ? 'Pages responsable IT' : 'Pages technicien'}>
+      {canManageTickets && <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected={activePage === 'overview'} className={activePage === 'overview' ? 'active' : ''} onClick={() => setActivePage('overview')}>{isAdmin ? 'Vue admin' : 'Vue manager'}</button>}
+      {isAdmin && <button type="button" role="tab" id="tab-admin-users" aria-controls="panel-admin-users" aria-selected={activePage === 'admin-users'} className={activePage === 'admin-users' ? 'active' : ''} onClick={() => setActivePage('admin-users')}>Comptes</button>}
+      {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
-      <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
+      {!isAdmin && <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>}
     </nav>
-    {isManager && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} /></div>}
+    {canManageTickets && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} isAdmin={isAdmin} /></div>}
+    {isAdmin && activePage === 'admin-users' && <div role="tabpanel" id="panel-admin-users" aria-labelledby="tab-admin-users"><AdminUsers currentUserId={user.id} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
-    {activePage === 'map' && <div role="tabpanel" id="panel-map" aria-labelledby="tab-map"><FacilityMap tickets={tickets} /></div>}
-    {activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
+    {!isAdmin && activePage === 'map' && <div role="tabpanel" id="panel-map" aria-labelledby="tab-map"><FacilityMap tickets={tickets} /></div>}
+    {!isAdmin && activePage === 'tickets' && <section role="tabpanel" id="panel-tickets" aria-labelledby="tab-tickets" className="grid technician-grid">
       <section className="card queue-card">
         <div className="card-heading"><span className="heading-icon">≡</span><div><p className="eyebrow">VUE D’ENSEMBLE</p><h2>File d’intervention</h2></div></div>
         <label className="ticket-search"><span aria-hidden="true">⌕</span><input type="search" value={ticketQuery} onChange={(event) => setTicketQuery(event.target.value)} placeholder="Référence, demandeur, équipement…" aria-label="Rechercher des interventions" /></label>
@@ -673,7 +679,7 @@ function Technician({ user, tickets, setTickets, onOpenChat }) {
   </>
 }
 
-function ManagerOverview({ tickets, technicians, onOpenTickets }) {
+function ManagerOverview({ tickets, technicians, onOpenTickets, isAdmin = false }) {
   const active = tickets.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status))
   const unassigned = active.filter((ticket) => !ticket.technicianId)
   const urgent = active.filter((ticket) => ticket.urgency === 'Haute')
@@ -696,12 +702,72 @@ function ManagerOverview({ tickets, technicians, onOpenTickets }) {
         }) : <p className="empty">Aucun technicien disponible. Vérifiez que les comptes de l’équipe ont le rôle « technician ».</p>}
       </section>
       <section className="card manager-attention"><div className="card-heading"><span className="heading-icon heading-icon-soft">!</span><div><p className="eyebrow">SUIVI RECOMMANDÉ</p><h2>Demandes à surveiller</h2></div></div>
-        {[...overdue, ...unassigned.filter((ticket) => !overdue.includes(ticket))].slice(0, 5).map((ticket) => <button type="button" className="manager-attention-row" key={ticket.dbId} onClick={onOpenTickets}><span><b>{ticket.id}</b><small>{getAsset(ticket.assetId)[1]} · {ticket.reporter}</small></span><Status status={ticket.status} /></button>)}
+        {[...overdue, ...unassigned.filter((ticket) => !overdue.includes(ticket))].slice(0, 5).map((ticket) => isAdmin ? <div className="manager-attention-row" key={ticket.dbId}><span><b>{ticket.id}</b><small>{getAsset(ticket.assetId)[1]} · {ticket.reporter}</small></span><Status status={ticket.status} /></div> : <button type="button" className="manager-attention-row" key={ticket.dbId} onClick={onOpenTickets}><span><b>{ticket.id}</b><small>{getAsset(ticket.assetId)[1]} · {ticket.reporter}</small></span><Status status={ticket.status} /></button>)}
         {!overdue.length && !unassigned.length && <p className="empty">Aucune demande ne nécessite d’attention immédiate.</p>}
-        <button type="button" className="manager-all-tickets" onClick={onOpenTickets}>Ouvrir la file d’intervention <span aria-hidden="true">→</span></button>
+        {!isAdmin && <button type="button" className="manager-all-tickets" onClick={onOpenTickets}>Ouvrir la file d’intervention <span aria-hidden="true">→</span></button>}
       </section>
     </div>
   </section>
+}
+
+function AdminUsers({ currentUserId }) {
+  const [users, setUsers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [updatingId, setUpdatingId] = useState('')
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [query, setQuery] = useState('')
+  const [roleFilter, setRoleFilter] = useState('all')
+  const loadUsers = async () => {
+    setLoading(true)
+    const { data, error: loadError } = await supabase.from('profiles').select('id, full_name, role, created_at').order('created_at', { ascending: false })
+    setLoading(false)
+    if (loadError) setError(loadError.message)
+    else { setUsers(data || []); setError('') }
+  }
+  useEffect(() => { void loadUsers() }, [])
+  const changeRole = async (person, role) => {
+    if (role === 'admin' && !window.confirm(`Donner les droits administrateur à ${person.full_name} ?`)) return
+    setUpdatingId(person.id)
+    setError('')
+    setMessage('')
+    const { error: updateError } = await supabase.rpc('admin_set_user_role', { p_user_id: person.id, p_role: role })
+    setUpdatingId('')
+    if (updateError) setError(updateError.message)
+    else {
+      setUsers((current) => current.map((user) => user.id === person.id ? { ...user, role } : user))
+      setMessage(`Rôle de ${person.full_name} mis à jour.`)
+    }
+  }
+  const matchingUsers = users.filter((person) => {
+    const matchesRole = roleFilter === 'all' || person.role === roleFilter
+    const matchesText = `${person.full_name} ${person.role}`.toLocaleLowerCase('fr').includes(query.trim().toLocaleLowerCase('fr'))
+    return matchesRole && matchesText
+  })
+  const roleNames = { employee: 'Employé', technician: 'Technicien', it_manager: 'Responsable IT', admin: 'Admin' }
+  return <div className="admin-users-page">
+    <div className="admin-account-summary">
+      <article><small>TOTAL DES COMPTES</small><b>{users.length}</b></article>
+      <article><small>EMPLOYÉS</small><b>{users.filter((person) => person.role === 'employee').length}</b></article>
+      <article><small>ÉQUIPE IT</small><b>{users.filter((person) => ['technician', 'it_manager'].includes(person.role)).length}</b></article>
+      <article><small>ADMINISTRATEURS</small><b>{users.filter((person) => person.role === 'admin').length}</b></article>
+    </div>
+    <section className="card admin-users-card">
+    <div className="admin-users-heading"><div className="card-heading"><span className="heading-icon">⚙</span><div><p className="eyebrow">GESTION DES ACCÈS</p><h2>Annuaire des comptes</h2></div></div><button type="button" className="admin-refresh" onClick={() => void loadUsers()} disabled={loading}>Actualiser</button></div>
+    <p className="card-intro">Attribuez le rôle adapté à chaque personne. Votre compte et les comptes administrateurs sont protégés.</p>
+    <div className="admin-user-tools"><label className="admin-user-search"><span aria-hidden="true">⌕</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher un nom ou un rôle" aria-label="Rechercher un compte" /></label><select value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)} aria-label="Filtrer les comptes par rôle"><option value="all">Tous les rôles</option>{Object.entries(roleNames).map(([role, label]) => <option key={role} value={role}>{label}</option>)}</select></div>
+    {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="admin-role-success" role="status">{message}</p>}
+    <div className="admin-user-columns"><span>COMPTE</span><span>RÔLE ET ACCÈS</span></div>
+    {loading ? <p className="empty">Chargement des comptes…</p> : matchingUsers.length ? <div className="admin-user-list">{matchingUsers.map((person) => {
+      const locked = person.id === currentUserId || person.role === 'admin'
+      return <div className="admin-user-row" key={person.id}>
+        <span className="admin-user-avatar">{person.full_name.split(' ').map((part) => part[0]).join('').slice(0, 2).toUpperCase()}</span>
+        <span className="admin-user-copy"><b>{person.full_name}{person.id === currentUserId ? ' (vous)' : ''}</b><small>Compte créé le {new Date(person.created_at).toLocaleDateString('fr-FR')}</small></span>
+        {locked ? <span className={`admin-role-pill admin-role-${person.role}`}>{person.id === currentUserId ? 'Votre compte · Admin' : 'Admin · Protégé'}</span> : <select aria-label={`Rôle de ${person.full_name}`} value={person.role} disabled={updatingId === person.id} onChange={(event) => void changeRole(person, event.target.value)}><option value="employee">Employé</option><option value="technician">Technicien</option><option value="it_manager">Responsable IT</option><option value="admin">Admin</option></select>}
+      </div>
+    })}</div> : <p className="empty">Aucun compte ne correspond à ces filtres.</p>}
+    </section>
+  </div>
 }
 
 function FacilityMap({ tickets }) {
@@ -983,7 +1049,7 @@ function Detail({ ticket, user, onOpenChat, update, escalate, savePlaybook, upda
     <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
-    {user.role === 'it_manager' && !['Annulé', 'Résolu', 'Clôturé'].includes(ticket.status) && <section className="manager-assignment"><p className="eyebrow">ATTRIBUTION DE L’INCIDENT</p><div><select value={assignmentId} onChange={(event) => setAssignmentId(event.target.value)} aria-label="Attribuer à un technicien"><option value="">Non attribué</option>{technicians.map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}</select><button type="button" onClick={assignTicket} disabled={assignmentBusy}>{assignmentBusy ? 'Enregistrement…' : 'Enregistrer'}</button></div></section>}
+    {['it_manager', 'admin'].includes(user.role) && !['Annulé', 'Résolu', 'Clôturé'].includes(ticket.status) && <section className="manager-assignment"><p className="eyebrow">ATTRIBUTION DE L’INCIDENT</p><div><select value={assignmentId} onChange={(event) => setAssignmentId(event.target.value)} aria-label="Attribuer à un technicien"><option value="">Non attribué</option>{technicians.filter((person) => person.role === 'technician' || person.id === assignmentId).map((person) => <option key={person.id} value={person.id}>{person.full_name}{person.role === 'technician' ? '' : ` · ${person.role === 'admin' ? 'Admin' : 'Responsable IT'}`}</option>)}</select><button type="button" onClick={assignTicket} disabled={assignmentBusy}>{assignmentBusy ? 'Enregistrement…' : 'Enregistrer'}</button></div></section>}
     {ticket.status === 'Annulé'
       ? <Notice title="Demande annulée" text="L’employé a annulé cette demande avant sa prise en charge." />
       : ticket.status === 'Résolu'
@@ -1325,7 +1391,7 @@ function Header({ user, logout, notifications, setNotifications }) {
     <header className="app-header">
       <Brand />
       <div className="header-user">
-        <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
+        <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'admin' ? 'Admin' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
         <div className="notification-wrap">
           <button className="notification-button" onClick={() => setOpen(!open)} aria-label={`Notifications${unread ? `, ${unread} non lues` : ''}`} aria-expanded={open}>
             <span aria-hidden="true">🔔</span>{unread > 0 && <i>{unread > 9 ? '9+' : unread}</i>}
@@ -1338,7 +1404,7 @@ function Header({ user, logout, notifications, setNotifications }) {
         <div className="header-profile">
           <button className="avatar" onClick={() => setProfileOpen((value) => !value)} title="Voir mon profil" aria-label="Voir mon profil" aria-expanded={profileOpen} aria-haspopup="dialog">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}<span className="avatar-presence" /></button>
           {profileOpen && <section className="profile-card" role="dialog" aria-label="Informations du profil">
-            <div className="profile-card-head"><span className="profile-card-avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><b>{user.name}</b><small>{user.role === 'employee' ? 'Employé' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</small></div></div>
+            <div className="profile-card-head"><span className="profile-card-avatar">{user.name.split(' ').map((part) => part[0]).join('').slice(0, 2)}</span><div><b>{user.name}</b><small>{user.role === 'employee' ? 'Employé' : user.role === 'admin' ? 'Admin' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</small></div></div>
             <div className="profile-card-info"><small>ADRESSE E-MAIL</small><b>{user.email || 'Non renseignée'}</b></div>
             <button type="button" className="profile-card-logout" onClick={logout}>Se déconnecter <span aria-hidden="true">↗</span></button>
           </section>}
