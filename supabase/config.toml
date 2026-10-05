@@ -3,3 +3,6 @@ verify_jwt = false
 
 [functions.ticket-email]
 verify_jwt = false
+
+[functions.technician-ai-assist]
+verify_jwt = true

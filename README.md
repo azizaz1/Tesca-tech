@@ -73,6 +73,18 @@ To enable email notifications:
 
 The database webhook runs asynchronously, so a temporary email delivery failure will not prevent an employee from submitting an incident. Check the Edge Function logs for delivery errors. Keep relay URLs and secrets server-side; never put them in the client app or Git. Gmail sending is subject to Google's account limits and policies.
 
+## Technician AI diagnostic assistant
+
+Technicians can request AI-generated troubleshooting steps and possible causes from a ticket's equipment ID and issue description. The technician reviews suggestions and chooses whether to add them to the diagnostic notes. The function only permits `technician`, `it_manager`, and `admin` profiles. Ticket descriptions are sent to Groq when a technician requests suggestions; do not include passwords or other secrets in ticket descriptions.
+
+To enable it on your Supabase project:
+
+1. In Supabase **Edge Functions → Secrets**, add `GROQ_API_KEY` with your Groq API key. Optionally add `GROQ_MODEL` to choose another model available to your Groq account; the default is `openai/gpt-oss-20b`.
+2. Deploy the function: `supabase functions deploy technician-ai-assist`.
+3. Rebuild/redeploy the app. Until the function and secret are configured, the rest of the technician workflow continues to work and the AI panel reports that it is unavailable.
+
+The Groq key stays in Supabase and is never included in the web or Android app.
+
 ## Available commands
 
 | Command | Description |

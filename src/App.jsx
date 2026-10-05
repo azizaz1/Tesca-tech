@@ -1271,6 +1271,9 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
   const [playbookNote, setPlaybookNote] = useState(ticket.playbook?.note || '')
   const [playbookSaving, setPlaybookSaving] = useState(false)
   const [playbookMessage, setPlaybookMessage] = useState('')
+  const [aiBusy, setAiBusy] = useState(false)
+  const [aiError, setAiError] = useState('')
+  const [aiAdvice, setAiAdvice] = useState(null)
   useEffect(() => setNote(ticket.note), [ticket.id, ticket.note])
   useEffect(() => {
     setPlaybookId(ticket.playbook?.playbookId || suggestPlaybook(ticket))
@@ -1278,7 +1281,41 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
     setPlaybookNote(ticket.playbook?.note || '')
   }, [ticket.id, ticket.playbook?.updatedAt])
   useEffect(() => setPlaybookMessage(''), [ticket.id])
+  useEffect(() => { setAiAdvice(null); setAiError('') }, [ticket.id])
   const activePlaybook = repairPlaybooks.find((item) => item.id === playbookId) || repairPlaybooks[0]
+  const requestAiAdvice = async () => {
+    setAiBusy(true)
+    setAiError('')
+    setAiAdvice(null)
+    const { data, error } = await supabase.functions.invoke('technician-ai-assist', {
+      body: { assetId: ticket.assetId, issue: ticket.issue, priority: ticket.urgency, status: ticket.status },
+    })
+    setAiBusy(false)
+    if (error) {
+      let errorMessage = error.message || 'Assistant IA indisponible. Vérifiez le déploiement de la fonction.'
+      if (error.context && typeof error.context.clone === 'function') {
+        const responseBody = await error.context.clone().json().catch(() => null)
+        if (typeof responseBody?.error === 'string') errorMessage = responseBody.error
+      }
+      setAiError(errorMessage)
+      return
+    }
+    if (!data?.steps?.length) {
+      setAiError(data?.error || 'L’assistant IA n’a pas renvoyé de conseils exploitables.')
+      return
+    }
+    setAiAdvice(data)
+  }
+  const appendAdviceToNote = () => {
+    const adviceText = [
+      'Conseils de diagnostic assistés par IA (à vérifier) :',
+      ...(aiAdvice.likelyCauses || []).map((cause) => `• Cause possible : ${cause}`),
+      ...aiAdvice.steps.map((step, index) => `${index + 1}. ${step}`),
+      aiAdvice.safetyNote ? `Précaution : ${aiAdvice.safetyNote}` : '',
+    ].filter(Boolean).join('\n')
+    setPlaybookNote((current) => current ? `${current.trim()}\n\n${adviceText}` : adviceText)
+    setPlaybookMessage('Conseils ajoutés au résultat du diagnostic. Vérifiez-les avant enregistrement.')
+  }
   const saveCurrentPlaybook = async () => {
     setPlaybookSaving(true)
     setPlaybookMessage('')
@@ -1308,6 +1345,10 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
     <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
     {ticket.status !== 'Annulé' && <section className="repair-playbook">
       <div className="playbook-heading"><div><p className="eyebrow">GUIDE DE DIAGNOSTIC</p><h3>Playbook de réparation</h3></div><span className="playbook-count">{checkedSteps.length}/{activePlaybook.steps.length}</span></div>
+      <div className="technician-ai-card"><div className="technician-ai-heading"><div><p className="eyebrow">ASSISTANT IA · CONSEILS À VÉRIFIER</p><p>Obtenez des pistes de diagnostic à partir du problème signalé.</p></div><button type="button" className="technician-ai-button" onClick={requestAiAdvice} disabled={aiBusy}>{aiBusy ? 'Analyse…' : '✦ Suggérer des étapes'}</button></div><small className="technician-ai-privacy">La description du ticket est envoyée au service IA configuré par votre entreprise.</small>
+        {aiError && <p className="form-message" role="alert">{aiError}</p>}
+        {aiAdvice && <div className="technician-ai-result"><div><b>Pistes possibles</b><ul>{aiAdvice.likelyCauses.map((cause) => <li key={cause}>{cause}</li>)}</ul></div><div><b>Étapes proposées</b><ol>{aiAdvice.steps.map((step, index) => <li key={`${index}-${step}`}>{step}</li>)}</ol></div>{aiAdvice.safetyNote && <p className="technician-ai-safety"><b>Précaution :</b> {aiAdvice.safetyNote}</p>}<button type="button" className="playbook-save" onClick={appendAdviceToNote}>Ajouter au compte rendu</button></div>}
+      </div>
       <label className="field playbook-select">Choisir un guide<select value={playbookId} onChange={(event) => { setPlaybookId(event.target.value); setCheckedSteps([]); setPlaybookMessage('') }}>{repairPlaybooks.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}</select></label>
       <div className="playbook-progress"><span style={{ width: `${(checkedSteps.length / activePlaybook.steps.length) * 100}%` }} /></div>
       <div className="playbook-steps">{activePlaybook.steps.map((step, index) => <label className={`playbook-step ${checkedSteps.includes(index) ? 'checked' : ''}`} key={step}><input type="checkbox" checked={checkedSteps.includes(index)} onChange={() => { setCheckedSteps((current) => current.includes(index) ? current.filter((item) => item !== index) : [...current, index]); setPlaybookMessage('') }} /><span className="playbook-check" aria-hidden="true">✓</span><span>{step}</span></label>)}</div>
