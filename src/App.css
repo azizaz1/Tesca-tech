@@ -592,3 +592,18 @@ input:not([type=checkbox]):not([type=radio]),textarea,select{border-radius:9px}
 .welcome{border-color:#abc9e8;box-shadow:0 10px 30px rgba(48,103,159,.09)}
 @media(max-width:680px){.welcome{border:1.5px solid #74a9dc;box-shadow:0 8px 24px rgba(54,112,171,.13)}}
 body.theme-dark .app-shell .welcome{border-color:#4b88c1}
+
+/* Shared welcome banner, matching the dark teal web reference */
+.welcome{border:1px solid #365c62;background:radial-gradient(ellipse at 86% 18%,rgba(114,159,150,.16),transparent 30%),linear-gradient(112deg,#203b40 0%,#294b50 58%,#2d5154 100%);box-shadow:0 14px 32px rgba(21,48,51,.13)}
+.welcome .eyebrow{color:#e0c4a7}
+.welcome h1{color:#f2f4f3}
+.welcome .subtle{color:#d1e0e0}
+.welcome-art{color:#d3dfe0}
+.welcome-art:before,.welcome-art:after{border-color:rgba(220,238,237,.12)}
+.welcome-art-line{background:rgba(220,238,237,.16)}
+.welcome-art small{color:rgba(224,237,235,.55)}
+.welcome-art-orb{background:#b87d68;box-shadow:0 12px 30px rgba(0,0,0,.16)}
+body.theme-dark .app-shell .welcome{border-color:#365c62;background:radial-gradient(ellipse at 86% 18%,rgba(114,159,150,.16),transparent 30%),linear-gradient(112deg,#203b40 0%,#294b50 58%,#2d5154 100%)}
+body.theme-dark .app-shell .welcome h1{color:#f2f4f3}
+body.theme-dark .app-shell .welcome .eyebrow{color:#e0c4a7}
+body.theme-dark .app-shell .welcome .subtle{color:#d1e0e0}
