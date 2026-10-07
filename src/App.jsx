@@ -293,6 +293,46 @@ export default function App() {
   }, [user?.id, user?.role])
 
   useEffect(() => {
+    if (!user || user.role !== 'technician') return undefined
+    let active = true
+    const fromRow = (row) => ({
+      id: `task-${row.id}`,
+      taskNotificationId: row.id,
+      title: row.title,
+      message: row.message,
+      createdAt: row.created_at,
+      read: Boolean(row.read_at),
+    })
+    supabase.from('technician_task_notifications').select('*').eq('recipient_id', user.id).is('read_at', null).order('created_at', { ascending: false }).limit(40)
+      .then(({ data, error }) => {
+        if (!active) return
+        if (error) {
+          console.warn('Could not load task notifications:', error.message)
+          return
+        }
+        const incoming = (data || []).map(fromRow)
+        setNotifications((current) => {
+          const existingIds = new Set(current.map((item) => item.id))
+          return [...current, ...incoming.filter((item) => !existingIds.has(item.id))].slice(0, 40)
+        })
+      })
+    const channel = supabase.channel(`technician-task-notifications-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'technician_task_notifications', filter: `recipient_id=eq.${user.id}` }, (payload) => {
+        if (payload.eventType === 'INSERT') {
+          const incoming = fromRow(payload.new)
+          setNotifications((current) => current.some((item) => item.id === incoming.id) ? current : [incoming, ...current].slice(0, 40))
+        } else if (payload.eventType === 'UPDATE') {
+          const updated = fromRow(payload.new)
+          setNotifications((current) => current.map((item) => item.id === updated.id ? updated : item))
+        }
+      }).subscribe()
+    return () => {
+      active = false
+      void supabase.removeChannel(channel)
+    }
+  }, [user?.id, user?.role])
+
+  useEffect(() => {
     if (user) localStorage.setItem(`notifications-${user.id}`, JSON.stringify(notifications.slice(0, 40)))
   }, [user?.id, notifications])
 
@@ -773,12 +813,14 @@ function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChang
       {isAdmin && <button type="button" role="tab" id="tab-admin-users" aria-controls="panel-admin-users" aria-selected={activePage === 'admin-users'} className={activePage === 'admin-users' ? 'active' : ''} onClick={() => setActivePage('admin-users')}>Comptes</button>}
       {isAdmin && <button type="button" role="tab" id="tab-admin-branding" aria-controls="panel-admin-branding" aria-selected={activePage === 'branding'} className={activePage === 'branding' ? 'active' : ''} onClick={() => setActivePage('branding')}>Identité</button>}
       {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
+      <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')}>{'T\u00e2ches'}</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
       {!isAdmin && <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>}
     </nav>
-    {canManageTickets && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} isAdmin={isAdmin} /></div>}
+    {canManageTickets && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} onOpenTasks={() => setActivePage('tasks')} isAdmin={isAdmin} /></div>}
     {isAdmin && activePage === 'admin-users' && <div role="tabpanel" id="panel-admin-users" aria-labelledby="tab-admin-users"><AdminUsers currentUserId={user.id} /></div>}
     {isAdmin && activePage === 'branding' && <div role="tabpanel" id="panel-admin-branding" aria-labelledby="tab-admin-branding"><AdminBranding brand={brand} onBrandChanged={onBrandChanged} /></div>}
+    {activePage === 'tasks' && <div role="tabpanel" id="panel-tasks" aria-labelledby="tab-tasks"><TaskCenter user={user} technicians={technicians} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
@@ -796,7 +838,94 @@ function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChang
   </>
 }
 
-function ManagerOverview({ tickets, technicians, onOpenTickets, isAdmin = false }) {
+function TaskCenter({ user, technicians }) {
+  const [tasks, setTasks] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [equipment, setEquipment] = useState('')
+  const [assignedTo, setAssignedTo] = useState('')
+  const [dueDate, setDueDate] = useState('')
+  const [completionNotes, setCompletionNotes] = useState({})
+  const canAssign = ['it_manager', 'admin'].includes(user.role)
+  const loadTasks = async () => {
+    const { data, error: loadError } = await supabase.from('technician_tasks').select('*').order('created_at', { ascending: false })
+    if (loadError) setError(loadError.message)
+    else { setTasks(data || []); setError('') }
+    setLoading(false)
+  }
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      const { data, error: loadError } = await supabase.from('technician_tasks').select('*').order('created_at', { ascending: false })
+      if (!active) return
+      if (loadError) setError(loadError.message)
+      else { setTasks(data || []); setError('') }
+      setLoading(false)
+    }
+    void refresh()
+    const channel = supabase.channel(`technician-tasks-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'technician_tasks' }, () => void refresh())
+      .subscribe()
+    return () => { active = false; void supabase.removeChannel(channel) }
+  }, [user.id])
+  const createTask = async (event) => {
+    event.preventDefault()
+    if (!assignedTo) { setError('Choisissez un technicien.'); return }
+    setSaving(true); setError(''); setMessage('')
+    try {
+      const { error: createError } = await supabase.from('technician_tasks').insert({ title: title.trim(), description: description.trim(), equipment: equipment.trim(), assigned_to: assignedTo, created_by: user.id, due_date: dueDate || null })
+      if (createError) throw createError
+      setTitle(''); setDescription(''); setEquipment(''); setDueDate('')
+      setMessage('T\u00e2che attribu\u00e9e. Le technicien recevra une notification dans l\u2019application.')
+      await loadTasks()
+    } catch (createError) {
+      setError(createError?.message || 'Impossible de cr\u00e9er la t\u00e2che. V\u00e9rifiez votre connexion et r\u00e9essayez.')
+    } finally {
+      setSaving(false)
+    }
+  }
+  const updateTask = async (task, status) => {
+    setError('')
+    const { error: updateError } = await supabase.from('technician_tasks').update({ status, completion_note: status === 'completed' ? (completionNotes[task.id] || '').trim() : task.completion_note, updated_at: new Date().toISOString() }).eq('id', task.id)
+    if (updateError) setError(updateError.message)
+    else void loadTasks()
+  }
+  const names = Object.fromEntries(technicians.map((person) => [person.id, person.full_name]))
+  const statusLabels = { pending: 'À faire', in_progress: 'En cours', completed: 'Terminée', cancelled: 'Annulée' }
+  return <section className="task-center">
+    {canAssign && <section className="card task-form-card">
+      <div className="card-heading"><span className="heading-icon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5.5A1.5 1.5 0 0 1 5.5 4h13A1.5 1.5 0 0 1 20 5.5v13a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 18.5zM8 8h8M8 12h8M8 16h5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" /></svg></span><div><p className="eyebrow">NOUVELLE MISSION</p><h2>{'Attribuer une t\u00e2che'}</h2></div></div>
+      <p className="card-intro">{'Cr\u00e9ez une intervention planifi\u00e9e, par exemple une v\u00e9rification antivirus sur plusieurs postes.'}</p>
+      <form onSubmit={(event) => void createTask(event)}>
+        <label className="task-field">Titre<input required minLength="3" maxLength="160" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex. Vérifier l’antivirus des postes" /></label>
+        <label className="task-field">Consignes<textarea maxLength="2000" rows="3" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Détaillez les vérifications à effectuer." /></label>
+        <div className="task-form-row">
+          <label className="task-field">Équipement / zone<input maxLength="160" value={equipment} onChange={(event) => setEquipment(event.target.value)} placeholder="Ex. Tous les PC Finance" /></label>
+          <label className="task-field">Technicien<select required value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">Choisir un technicien</option>{technicians.filter((person) => person.role === 'technician').map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}</select></label>
+          <label className="task-field">Date limite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+        </div>
+        <button type="submit" className="primary-action task-submit" disabled={saving}>{saving ? 'Attribution...' : 'Attribuer la tâche'} <span aria-hidden="true">→</span></button>
+      </form>
+    </section>}
+    <section className="card task-list-card">
+      <div className="card-heading"><span className="heading-icon heading-icon-soft">✓</span><div><p className="eyebrow">SUIVI DES MISSIONS</p><h2>{canAssign ? 'Tâches de l’équipe' : 'Mes tâches'}</h2></div></div>
+      {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="task-success" role="status">{message}</p>}
+      {loading ? <p className="empty">Chargement des tâches...</p> : tasks.length ? <div className="task-list">{tasks.map((task) => <article className="task-row" key={task.id}>
+        <div className="task-row-head"><div><h3>{task.title}</h3><small>{canAssign ? `Attribuée à ${names[task.assigned_to] || 'Technicien'}` : 'Mission attribuée par le responsable IT'}{task.equipment ? ` · ${task.equipment}` : ''}</small></div><span className={`task-status task-status-${task.status}`}>{statusLabels[task.status] || task.status}</span></div>
+        {task.description && <p className="task-description">{task.description}</p>}
+        <div className="task-row-meta"><span>Créée le {new Date(task.created_at).toLocaleDateString('fr-FR')}</span>{task.due_date && <span>Échéance : {new Date(`${task.due_date}T00:00:00`).toLocaleDateString('fr-FR')}</span>}</div>
+        {!canAssign && task.status !== 'completed' && task.status !== 'cancelled' && <div className="task-progress"><label className="task-field">Note de fin (facultatif)<textarea rows="2" value={completionNotes[task.id] ?? task.completion_note ?? ''} onChange={(event) => setCompletionNotes((current) => ({ ...current, [task.id]: event.target.value }))} placeholder="Résultat ou anomalie constatée" /></label><div><button type="button" onClick={() => void updateTask(task, 'in_progress')} disabled={task.status === 'in_progress'}>Commencer</button><button type="button" className="task-complete" onClick={() => void updateTask(task, 'completed')}>Terminer</button></div></div>}
+        {task.status === 'completed' && task.completion_note && <p className="task-completion-note"><b>Compte rendu :</b> {task.completion_note}</p>}
+      </article>)}</div> : <p className="empty">{canAssign ? 'Aucune tâche attribuée pour le moment.' : 'Aucune tâche ne vous a été attribuée pour le moment.'}</p>}
+    </section>
+  </section>
+}
+
+function ManagerOverview({ tickets, technicians, onOpenTickets, onOpenTasks, isAdmin = false }) {
   const [now, setNow] = useState(Date.now())
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000)
@@ -810,6 +939,7 @@ function ManagerOverview({ tickets, technicians, onOpenTickets, isAdmin = false 
   const atRisk = active.filter((ticket) => getTicketSlaInfo(ticket, now)?.state === 'at-risk')
   const needsAttention = [...overdue, ...atRisk, ...unassigned.filter((ticket) => !overdue.includes(ticket) && !atRisk.includes(ticket))]
   return <section className="manager-overview">
+    <section className="manager-task-action"><div><b>{'Planifier le travail de l\u2019\u00e9quipe'}</b><span>{'Attribuez une t\u00e2che de maintenance ou de v\u00e9rification \u00e0 un technicien.'}</span></div><button type="button" onClick={onOpenTasks}>{'Cr\u00e9er une t\u00e2che'}</button></section>
     <div className="manager-metrics">
       <article><small>INCIDENTS ACTIFS</small><b>{active.length}</b><span>Demandes en cours de traitement</span></article>
       <article><small>À ATTRIBUER</small><b>{unassigned.length}</b><span>Demandes sans technicien</span></article>
@@ -1716,11 +1846,18 @@ function Header({ user, logout, notifications, setNotifications, brand }) {
       const readAt = new Date().toISOString()
       await supabase.from('ticket_sla_notifications').update({ read_at: readAt }).eq('id', item.slaNotificationId)
     }
+    if (item?.taskNotificationId) {
+      const readAt = new Date().toISOString()
+      await supabase.from('technician_task_notifications').update({ read_at: readAt }).eq('id', item.taskNotificationId)
+    }
     setNotifications((items) => items.map((notification) => notification.id === id ? { ...notification, read: true } : notification))
   }
   const clearNotifications = async () => {
     if (['it_manager', 'admin'].includes(user.role)) {
       await supabase.from('ticket_sla_notifications').update({ read_at: new Date().toISOString() }).eq('recipient_id', user.id).is('read_at', null)
+    }
+    if (user.role === 'technician') {
+      await supabase.from('technician_task_notifications').update({ read_at: new Date().toISOString() }).eq('recipient_id', user.id).is('read_at', null)
     }
     setNotifications([])
   }

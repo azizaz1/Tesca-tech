@@ -41,6 +41,12 @@ A French-language IT support portal for reporting and tracking equipment inciden
 4. Add the project URL and publishable key to `.env`, then start the app and create an account.
 5. To grant technician access, find the user's ID in Supabase Auth and run the promotion query shown in `supabase/migrations/001_auth_profiles.sql`.
 
+## Manager-assigned technician tasks
+
+IT managers and admins can create operational tasks separately from incident tickets, assign them to a technician, add equipment or a work area, instructions, and a due date. Technicians see their assigned tasks, can mark work in progress or complete, and add a completion note. Assignments appear in the technician's in-app notification menu in real time and remain available across sign-ins.
+
+To enable this feature on an existing database, run `supabase/migrations/019_technician_tasks.sql` in the Supabase SQL Editor after migration `018_ticket_sla_tracking.sql`. The migration creates the task and notification tables, role-based policies, and the realtime assignment notification trigger.
+
 ## Incident sync and Android push notifications
 
 The app stores incidents in Supabase and refreshes both employee and technician views in real time. Android push notifications are sent to all technicians when a new incident is submitted and to the reporting employee when its status changes (including **En cours** and **Résolu**).
