@@ -293,7 +293,7 @@ export default function App() {
   }, [user?.id, user?.role])
 
   useEffect(() => {
-    if (!user || user.role !== 'technician') return undefined
+    if (!user || !['technician', 'it_manager', 'admin'].includes(user.role)) return undefined
     let active = true
     const fromRow = (row) => ({
       id: `task-${row.id}`,
@@ -696,10 +696,10 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
   const isManager = user.role === 'it_manager'
   const isAdmin = user.role === 'admin'
   const canManageTickets = isManager || isAdmin
-  const unreadTaskCount = user.role === 'technician' ? notifications.filter((item) => item.taskNotificationId && !item.read).length : 0
+  const unreadTaskCount = ['technician', 'it_manager', 'admin'].includes(user.role) ? notifications.filter((item) => item.taskNotificationId && !item.read).length : 0
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
   useEffect(() => {
-    if (user.role !== 'technician' || activePage !== 'tasks') return
+    if (!['technician', 'it_manager', 'admin'].includes(user.role) || activePage !== 'tasks') return
     const unread = notifications.filter((item) => item.taskNotificationId && !item.read)
     if (!unread.length) return
     const readAt = new Date().toISOString()
@@ -1966,7 +1966,7 @@ function Header({ user, logout, notifications, setNotifications, brand }) {
     if (['it_manager', 'admin'].includes(user.role)) {
       await supabase.from('ticket_sla_notifications').update({ read_at: new Date().toISOString() }).eq('recipient_id', user.id).is('read_at', null)
     }
-    if (user.role === 'technician') {
+    if (['technician', 'it_manager', 'admin'].includes(user.role)) {
       await supabase.from('technician_task_notifications').update({ read_at: new Date().toISOString() }).eq('recipient_id', user.id).is('read_at', null)
     }
     setNotifications([])
