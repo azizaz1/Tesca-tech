@@ -542,3 +542,7 @@ body.theme-dark .form-message[role=alert]{color:#ffaaa0}
 body.theme-dark .task-success{color:#9bd2a8}
 body.theme-dark .timeline-dot{background:#202b32}
 @media(max-width:680px){.theme-toggle{height:34px;gap:4px;padding:0 7px}.theme-toggle small{font-size:8px}}
+
+.theme-toggle{width:36px;min-width:36px;justify-content:center;padding:0}.theme-toggle>span{font-size:19px}
+@media(max-width:680px){.theme-toggle{width:34px;min-width:34px;padding:0}}
+

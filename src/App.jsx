@@ -1982,7 +1982,7 @@ function Header({ user, logout, notifications, setNotifications, brand, darkMode
       <Brand settings={brand} />
       <div className="header-user">
         <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'admin' ? 'Admin' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
-        <button type="button" className="theme-toggle" onClick={onToggleDarkMode} aria-label={darkMode ? 'Activer le mode clair' : 'Activer le mode nuit'} title={darkMode ? 'Mode clair' : 'Mode nuit'}><span aria-hidden="true">{darkMode ? '☀' : '☾'}</span><small>{darkMode ? 'Clair' : 'Nuit'}</small></button>
+        <button type="button" className="theme-toggle" onClick={onToggleDarkMode} aria-label={darkMode ? 'Activer le mode clair' : 'Activer le mode nuit'} title={darkMode ? 'Mode clair' : 'Mode nuit'}><span aria-hidden="true">{darkMode ? '☀' : '☾'}</span></button>
         <div className="notification-wrap">
           <button className="notification-button" onClick={() => setOpen(!open)} aria-label={`Notifications${unread ? `, ${unread} non lues` : ''}`} aria-expanded={open}>
             <span aria-hidden="true">🔔</span>{unread > 0 && <i>{unread > 9 ? '9+' : unread}</i>}
