@@ -47,6 +47,10 @@ IT managers and admins can create operational tasks separately from incident tic
 
 To enable this feature on an existing database, run `supabase/migrations/019_technician_tasks.sql` in the Supabase SQL Editor after migration `018_ticket_sla_tracking.sql`. The migration creates the task and notification tables, role-based policies, and the realtime assignment notification trigger.
 
+## Shared facility map
+
+IT managers and admins can upload a facility floor plan from desktop or mobile, then drag the numbered equipment markers into position. The uploaded map and marker positions are shared with authenticated users across devices. Apply `supabase/migrations/020_shared_facility_map.sql` after migration 019 to create the private map storage bucket and shared map settings.
+
 ## Incident sync and Android push notifications
 
 The app stores incidents in Supabase and refreshes both employee and technician views in real time. Android push notifications are sent to all technicians when a new incident is submitted and to the reporting employee when its status changes (including **En cours** and **Résolu**).
