@@ -441,10 +441,16 @@ function Login({ brand }) {
 
 function Portal({ user, tickets, setTickets, ticketError, notifications, setNotifications, logout, brand, onBrandChanged }) {
   const [activeChatTicket, setActiveChatTicket] = useState(null)
+  const [darkMode, setDarkMode] = useState(() => localStorage.getItem(`theme-${user.id}`) === 'dark')
+  useEffect(() => {
+    document.body.classList.toggle('theme-dark', darkMode)
+    localStorage.setItem(`theme-${user.id}`, darkMode ? 'dark' : 'light')
+    return () => document.body.classList.remove('theme-dark')
+  }, [darkMode, user.id])
   return (
-    <main className={`app-shell ${Capacitor.isNativePlatform() ? 'native-experience' : 'web-experience'}`}>
+    <main className={`app-shell ${Capacitor.isNativePlatform() ? 'native-experience' : 'web-experience'}${darkMode ? ' dark-mode' : ''}`}>
       <PushRegistration userId={user.id} />
-      <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} brand={brand} />
+      <Header user={user} logout={logout} notifications={notifications} setNotifications={setNotifications} brand={brand} darkMode={darkMode} onToggleDarkMode={() => setDarkMode((value) => !value)} />
       <ChatInbox user={user} tickets={tickets} selectedTicket={activeChatTicket} setSelectedTicket={setActiveChatTicket} />
       <div className="portal-content">
         {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
@@ -1946,7 +1952,7 @@ function Brand({ light = false, settings = defaultBrand }) {
   return <div className={`brand ${light ? 'brand-light' : ''}`}><span className={`brand-mark${settings.logoUrl ? ' brand-mark-image' : ''}`}>{settings.logoUrl ? <img src={settings.logoUrl} alt="" /> : settings.companyName.slice(0, 1).toLowerCase()}</span><span className="brand-word">{settings.companyName}</span></div>
 }
 
-function Header({ user, logout, notifications, setNotifications, brand }) {
+function Header({ user, logout, notifications, setNotifications, brand, darkMode, onToggleDarkMode }) {
   const [open, setOpen] = useState(false)
   const [profileOpen, setProfileOpen] = useState(false)
   const unread = notifications.filter((item) => !item.read).length
@@ -1976,6 +1982,7 @@ function Header({ user, logout, notifications, setNotifications, brand }) {
       <Brand settings={brand} />
       <div className="header-user">
         <div className="header-user-copy"><small>CONNECTÉ EN TANT QUE</small><b>{user.role === 'employee' ? 'Employé' : user.role === 'admin' ? 'Admin' : user.role === 'it_manager' ? 'Responsable IT' : 'Technicien'}</b></div>
+        <button type="button" className="theme-toggle" onClick={onToggleDarkMode} aria-label={darkMode ? 'Activer le mode clair' : 'Activer le mode nuit'} title={darkMode ? 'Mode clair' : 'Mode nuit'}><span aria-hidden="true">{darkMode ? '☀' : '☾'}</span><small>{darkMode ? 'Clair' : 'Nuit'}</small></button>
         <div className="notification-wrap">
           <button className="notification-button" onClick={() => setOpen(!open)} aria-label={`Notifications${unread ? `, ${unread} non lues` : ''}`} aria-expanded={open}>
             <span aria-hidden="true">🔔</span>{unread > 0 && <i>{unread > 9 ? '9+' : unread}</i>}
