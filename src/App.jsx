@@ -1164,7 +1164,7 @@ function AdminBranding({ brand, onBrandChanged }) {
 
 function FacilityMap({ tickets, user }) {
   const [selectedAssetId, setSelectedAssetId] = useState(null)
-  const mapAssets = assets
+  const [mapAssets, setMapAssets] = useState(assets)
   const [positions, setPositions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('facility-map-positions') || '{}') } catch { return {} }
   })
@@ -1178,16 +1178,23 @@ function FacilityMap({ tickets, user }) {
   const mapPointers = useRef(new Map())
   const pinchStart = useRef(null)
   const draggedAsset = useRef(null)
+  const [addingAsset, setAddingAsset] = useState(false)
+  const [newAsset, setNewAsset] = useState({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
+  const [assetBusy, setAssetBusy] = useState(false)
   const canEdit = ['it_manager', 'admin'].includes(user?.role)
 
   useEffect(() => {
     let active = true
     const refreshSharedMap = async () => {
-      const [settingsResult, positionsResult] = await Promise.all([
+      const [settingsResult, positionsResult, assetsResult] = await Promise.all([
         supabase.from('facility_map_settings').select('map_path').eq('id', true).maybeSingle(),
         supabase.from('facility_map_positions').select('asset_id, x, y'),
+        supabase.from('assets').select('id, name, kind, department, location').order('id'),
       ])
       if (!active) return
+      if (!assetsResult.error && assetsResult.data?.length) {
+        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+      }
       if (settingsResult.error) setMapError(settingsResult.error.message)
       else {
         const path = settingsResult.data?.map_path || ''
@@ -1213,6 +1220,7 @@ function FacilityMap({ tickets, user }) {
     const channel = supabase.channel(`facility-map-${user.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'facility_map_settings' }, () => void refreshSharedMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'facility_map_positions' }, () => void refreshSharedMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, () => void refreshSharedMap())
       .subscribe()
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [user.id])
@@ -1251,6 +1259,28 @@ function FacilityMap({ tickets, user }) {
     const { x, y } = positionsRef.current[id]
     const { error } = await supabase.from('facility_map_positions').upsert({ asset_id: id, x, y, updated_by: user.id, updated_at: new Date().toISOString() }, { onConflict: 'asset_id' })
     if (error) setMapError(error.message)
+  }
+  const addAsset = async (event) => {
+    event.preventDefault()
+    const record = {
+      id: newAsset.id.trim().toUpperCase(),
+      name: newAsset.name.trim(),
+      kind: newAsset.kind.trim(),
+      department: newAsset.department.trim(),
+      location: newAsset.location.trim(),
+    }
+    if (!record.id || !record.name || !record.kind || !record.department || !record.location) return
+    setAssetBusy(true)
+    setMapError('')
+    const { error } = await supabase.from('assets').insert(record)
+    if (error) setMapError(error.message)
+    else {
+      setNewAsset({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
+      setAddingAsset(false)
+      const { data } = await supabase.from('assets').select('id, name, kind, department, location').order('id')
+      if (data) setMapAssets(data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+    }
+    setAssetBusy(false)
   }
   const handleMapPointerDown = (event) => {
     mapPointers.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
@@ -1323,10 +1353,12 @@ function FacilityMap({ tickets, user }) {
   return <section className="facility-map card">
     <div className="facility-map-heading"><div><p className="eyebrow">PLAN INTERACTIF</p><h2>Carte du site</h2><p>{canEdit ? 'Importez un plan, puis deplacez les reperes numerotes.' : 'Selectionnez un numero pour afficher l equipement correspondant.'}</p></div><div className="facility-map-actions">
       {canEdit && <label className="map-upload-control">{mapBusy ? 'Import en cours...' : mapImageUrl ? 'Changer le plan' : 'Importer un plan'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={(event) => void uploadMap(event)} disabled={mapBusy} /></label>}
+      {canEdit && <button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un équipement</button>}
       <div className="map-zoom-controls" aria-label="Zoom"><button type="button" onClick={() => setMapZoom((zoom) => Math.max(0.75, +(zoom - 0.25).toFixed(2)))} aria-label="Zoom arriere" disabled={mapZoom <= 0.75}>-</button><span>{Math.round(mapZoom * 100)}%</span><button type="button" onClick={() => setMapZoom((zoom) => Math.min(2, +(zoom + 0.25).toFixed(2)))} aria-label="Zoom avant" disabled={mapZoom >= 2}>+</button><button type="button" onClick={() => setMapZoom(1)} aria-label="Reinitialiser le zoom">Reset</button></div>
       <button type="button" className={is3d ? 'active' : ''} onClick={() => setIs3d((value) => !value)}>{is3d ? 'Vue 2D' : 'Vue 3D'}</button>
     </div></div>
     {mapError && <p className="map-upload-error" role="alert">{mapError}</p>}
+    {addingAsset && canEdit && <form className="map-asset-form" onSubmit={(event) => void addAsset(event)}><input required maxLength={80} placeholder="Référence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required maxLength={160} placeholder="Nom de l’équipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><input required maxLength={80} placeholder="Type (PC fixe, imprimante…)" value={newAsset.kind} onChange={(event) => setNewAsset({ ...newAsset, kind: event.target.value })} /><input required maxLength={120} placeholder="Service" value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })} /><input required maxLength={160} placeholder="Bâtiment, étage, bureau" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit" disabled={assetBusy}>{assetBusy ? 'Ajout…' : 'Ajouter'}</button></form>}
     <div className="facility-plan">
       <div className={`facility-plan-image ${is3d ? 'map-view-3d' : ''}`} style={{ '--map-zoom': mapZoom }} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerEnd} onPointerCancel={handleMapPointerEnd}>
         <img src={mapImageUrl || officeFloorplan} alt="Plan du site" />
