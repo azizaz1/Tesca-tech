@@ -589,6 +589,6 @@ input:not([type=checkbox]):not([type=radio]),textarea,select{border-radius:9px}
 @media(prefers-reduced-motion:reduce){.card,.technician-page-tabs button,.primary-action,.task-submit,.notification-button,.avatar,.theme-toggle{transition:none}}
 
 /* Keep the technician workspace blue-accented on mobile */
-.welcome-technician{border-color:#abc9e8;box-shadow:0 10px 30px rgba(48,103,159,.09)}
-@media(max-width:680px){.welcome-technician{border:1.5px solid #74a9dc;box-shadow:0 8px 24px rgba(54,112,171,.13)}}
-body.theme-dark .app-shell .welcome-technician{border-color:#4b88c1}
+.welcome{border-color:#abc9e8;box-shadow:0 10px 30px rgba(48,103,159,.09)}
+@media(max-width:680px){.welcome{border:1.5px solid #74a9dc;box-shadow:0 8px 24px rgba(54,112,171,.13)}}
+body.theme-dark .app-shell .welcome{border-color:#4b88c1}
