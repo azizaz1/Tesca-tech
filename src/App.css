@@ -546,3 +546,44 @@ body.theme-dark .timeline-dot{background:#202b32}
 .theme-toggle{width:36px;min-width:36px;justify-content:center;padding:0}.theme-toggle>span{font-size:19px}
 @media(max-width:680px){.theme-toggle{width:34px;min-width:34px;padding:0}}
 
+
+/* Modern application template refresh */
+body{background:#f3f5f4}
+.app-shell{max-width:1480px;padding-left:clamp(18px,5vw,76px);padding-right:clamp(18px,5vw,76px)}
+.app-header{height:72px;border-bottom-color:#e4e9e6}
+.portal-content{max-width:1160px}
+.welcome{min-height:158px;margin:14px 0 22px;border:1px solid #e7ebe6;border-radius:20px;padding:27px 30px;background:radial-gradient(ellipse at 88% 18%,rgba(108,153,120,.12),transparent 36%),linear-gradient(115deg,#fbfcfa,#f4f7f3 72%,#eef4ee);box-shadow:0 12px 32px rgba(34,52,46,.045)}
+.welcome h1{font-size:clamp(27px,3vw,34px);letter-spacing:-1.2px}
+.welcome-art{right:20px;opacity:.72}
+.grid{gap:16px}
+.card{border-color:#e5eae6;border-radius:17px;padding:23px;box-shadow:0 10px 30px rgba(31,49,43,.045);transition:border-color .18s,box-shadow .18s}
+.card:hover{border-color:#dce5dd;box-shadow:0 14px 34px rgba(31,49,43,.065)}
+.card-heading{gap:11px;margin-bottom:18px}
+.card h2{letter-spacing:-.45px}
+.heading-icon{border-radius:12px}
+.technician-page-tabs{max-width:500px!important;gap:4px;border-color:#e5eae6;border-radius:13px;background:#e9eeea;padding:4px}
+.technician-page-tabs button{min-height:40px;border-radius:10px;transition:background .16s,color .16s,box-shadow .16s}
+.technician-page-tabs button:hover:not(.active){background:rgba(255,255,255,.55);color:#3f554a}
+.technician-page-tabs button.active{color:#254936}
+.primary-action,.task-submit,.map-upload-control,.add-map-asset{border-radius:10px;transition:transform .16s,box-shadow .16s,filter .16s}
+.primary-action:hover,.task-submit:hover,.add-map-asset:hover{transform:translateY(-1px);box-shadow:0 7px 17px rgba(39,82,57,.16)}
+input:not([type=checkbox]):not([type=radio]),textarea,select{border-radius:9px}
+.ticket-search,.ticket-advanced-filter select{border-radius:10px}
+.facility-map{border-radius:18px}
+.task-row{transition:background .16s}
+.notification-button,.avatar,.theme-toggle{transition:transform .16s,background .16s,border-color .16s}
+.notification-button:hover,.avatar:hover,.theme-toggle:hover{transform:translateY(-1px)}
+@media(max-width:680px){
+  .app-shell{padding-left:15px;padding-right:15px}
+  .app-header{height:64px}
+  .header-user{gap:8px}
+  .welcome{min-height:132px;margin:10px 0 16px;border-radius:16px;padding:22px 19px}
+  .welcome h1{max-width:78%;font-size:26px}
+  .welcome .subtle{max-width:74%;font-size:11px;line-height:1.5}
+  .welcome-art{right:-49px;width:175px;opacity:.45}
+  .welcome-art:after{width:165px;height:165px}
+  .welcome-art:before{width:125px;height:125px}
+  .welcome-art-orb{width:54px;height:54px;font-size:24px}
+  .card{border-radius:15px;padding:19px 17px}
+}
+@media(prefers-reduced-motion:reduce){.card,.technician-page-tabs button,.primary-action,.task-submit,.notification-button,.avatar,.theme-toggle{transition:none}}
