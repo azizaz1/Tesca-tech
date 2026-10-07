@@ -450,7 +450,7 @@ function Portal({ user, tickets, setTickets, ticketError, notifications, setNoti
         {ticketError && <Notice title="Synchronisation indisponible" text={ticketError} />}
         {user.role === 'employee'
           ? <Employee user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} />
-          : <Technician user={user} tickets={tickets} setTickets={setTickets} onOpenChat={setActiveChatTicket} brand={brand} onBrandChanged={onBrandChanged} />}
+          : <Technician user={user} tickets={tickets} setTickets={setTickets} notifications={notifications} setNotifications={setNotifications} onOpenChat={setActiveChatTicket} brand={brand} onBrandChanged={onBrandChanged} />}
       </div>
     </main>
   )
@@ -679,7 +679,7 @@ function EmployeeHelpChat() {
   </aside>
 }
 
-function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChanged }) {
+function Technician({ user, tickets, setTickets, notifications, setNotifications, onOpenChat, brand, onBrandChanged }) {
   const [selectedId, setSelectedId] = useState(tickets[0]?.id)
   const [mobileDetailOpen, setMobileDetailOpen] = useState(false)
   const queueRef = useRef(null)
@@ -696,7 +696,17 @@ function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChang
   const isManager = user.role === 'it_manager'
   const isAdmin = user.role === 'admin'
   const canManageTickets = isManager || isAdmin
+  const unreadTaskCount = user.role === 'technician' ? notifications.filter((item) => item.taskNotificationId && !item.read).length : 0
   const selected = tickets.find((ticket) => ticket.id === selectedId) || tickets[0]
+  useEffect(() => {
+    if (user.role !== 'technician' || activePage !== 'tasks') return
+    const unread = notifications.filter((item) => item.taskNotificationId && !item.read)
+    if (!unread.length) return
+    const readAt = new Date().toISOString()
+    const ids = unread.map((item) => item.taskNotificationId)
+    setNotifications((current) => current.map((item) => ids.includes(item.taskNotificationId) ? { ...item, read: true } : item))
+    void supabase.from('technician_task_notifications').update({ read_at: readAt }).in('id', ids)
+  }, [activePage, user.id, user.role, notifications, setNotifications])
   useEffect(() => {
     if (!scrollToDetailOnMobile.current) return
     scrollToDetailOnMobile.current = false
@@ -813,7 +823,7 @@ function Technician({ user, tickets, setTickets, onOpenChat, brand, onBrandChang
       {isAdmin && <button type="button" role="tab" id="tab-admin-users" aria-controls="panel-admin-users" aria-selected={activePage === 'admin-users'} className={activePage === 'admin-users' ? 'active' : ''} onClick={() => setActivePage('admin-users')}>Comptes</button>}
       {isAdmin && <button type="button" role="tab" id="tab-admin-branding" aria-controls="panel-admin-branding" aria-selected={activePage === 'branding'} className={activePage === 'branding' ? 'active' : ''} onClick={() => setActivePage('branding')}>Identité</button>}
       {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
-      <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')}>{'T\u00e2ches'}</button>
+      <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')} aria-label={`Tâches${unreadTaskCount ? `, ${unreadTaskCount} nouvelle${unreadTaskCount > 1 ? 's' : ''}` : ''}`}>{'T\u00e2ches'}{unreadTaskCount > 0 && <span className="task-tab-badge">{unreadTaskCount > 9 ? '9+' : unreadTaskCount}</span>}</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
       <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
     </nav>
