@@ -699,6 +699,14 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
   const [technicians, setTechnicians] = useState([])
   const [assignmentId, setAssignmentId] = useState('')
   const [assignmentBusy, setAssignmentBusy] = useState(false)
+  const [knowledge, setKnowledge] = useState([])
+  const [knowledgeError, setKnowledgeError] = useState('')
+  const loadKnowledge = async () => {
+    const { data, error } = await supabase.from('resolution_articles').select('*').order('created_at', { ascending: false })
+    if (error) setKnowledgeError(error.message)
+    else { setKnowledge(data || []); setKnowledgeError('') }
+  }
+  useEffect(() => { void loadKnowledge() }, [])
   const isManager = user.role === 'it_manager'
   const isAdmin = user.role === 'admin'
   const canManageTickets = isManager || isAdmin
@@ -818,6 +826,16 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
     setTickets((all) => all.map((item) => item.dbId === ticket.dbId ? { ...item, playbook: saved } : item))
     return { ok: true }
   }
+  const saveResolutionArticle = async (ticket, article) => {
+    const { data, error } = await supabase.from('resolution_articles').insert({
+      title: article.title, asset_id: ticket.assetId, issue: ticket.issue, solution: article.solution,
+      playbook_title: repairPlaybooks.find((item) => item.id === ticket.playbook?.playbookId)?.title || '',
+      source_ticket_id: ticket.dbId, created_by: user.id,
+    }).select().single()
+    if (error) return { ok: false, error: error.message }
+    setKnowledge((current) => [data, ...current.filter((item) => item.id !== data.id)])
+    return { ok: true }
+  }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
   const welcomeLabel = isAdmin ? (activePage === 'overview' ? 'PILOTAGE ADMINISTRATEUR' : activePage === 'admin-users' ? 'ADMINISTRATION DES COMPTES' : activePage === 'branding' ? 'IDENTITÉ DE L’ENTREPRISE' : 'ANALYSE DU SUPPORT') : isManager && activePage === 'overview' ? 'PILOTAGE IT' : isManager ? 'GESTION DES INCIDENTS' : activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'
   const welcomeText = isAdmin ? (activePage === 'admin-users' ? 'Gérez les accès et les rôles des comptes de votre organisation.' : activePage === 'branding' ? 'Personnalisez le nom et le logo visibles pour toute votre organisation.' : activePage === 'stats' ? 'Suivez le volume et les tendances de votre support informatique.' : 'Vue d’ensemble des incidents, des priorités et de la charge de l’équipe.') : isManager && activePage === 'overview' ? 'Suivez la charge, les priorités et les incidents à traiter.' : isManager ? 'Attribuez les demandes et coordonnez les interventions.' : 'Le tableau de bord de vos interventions.'
@@ -831,12 +849,14 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
       {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
       <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')} aria-label={`Tâches${unreadTaskCount ? `, ${unreadTaskCount} nouvelle${unreadTaskCount > 1 ? 's' : ''}` : ''}`}>{'T\u00e2ches'}{unreadTaskCount > 0 && <span className="task-tab-badge">{unreadTaskCount > 9 ? '9+' : unreadTaskCount}</span>}</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
+      <button type="button" role="tab" id="tab-knowledge" aria-controls="panel-knowledge" aria-selected={activePage === 'knowledge'} className={activePage === 'knowledge' ? 'active' : ''} onClick={() => setActivePage('knowledge')}>Base de solutions</button>
       <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
     </nav>
     {canManageTickets && activePage === 'overview' && <div role="tabpanel" id="panel-overview" aria-labelledby="tab-overview"><ManagerOverview tickets={tickets} technicians={technicians} onOpenTickets={() => setActivePage('tickets')} onOpenTasks={() => setActivePage('tasks')} isAdmin={isAdmin} /></div>}
     {isAdmin && activePage === 'admin-users' && <div role="tabpanel" id="panel-admin-users" aria-labelledby="tab-admin-users"><AdminUsers currentUserId={user.id} /></div>}
     {isAdmin && activePage === 'branding' && <div role="tabpanel" id="panel-admin-branding" aria-labelledby="tab-admin-branding"><AdminBranding brand={brand} onBrandChanged={onBrandChanged} /></div>}
     {activePage === 'tasks' && <div role="tabpanel" id="panel-tasks" aria-labelledby="tab-tasks"><TaskCenter user={user} technicians={technicians} /></div>}
+    {activePage === 'knowledge' && <div role="tabpanel" id="panel-knowledge" aria-labelledby="tab-knowledge"><ResolutionKnowledge articles={knowledge} error={knowledgeError} reload={loadKnowledge} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
     </div>}
@@ -849,9 +869,16 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
         <div className="filters" role="group" aria-label="Filtrer les incidents">{['Tous', 'Ouvert', 'En cours', 'Résolu', 'Annulé'].map((value) => <button className={filter === value ? 'active' : ''} key={value} onClick={() => setFilter(value)}>{value}{value === 'Tous' && <span className="filter-count">{tickets.length}</span>}</button>)}</div>
         <div className="ticket-list">{shown.length ? shown.map((ticket) => <button className={`ticket select ${selected?.id === ticket.id ? 'selected' : ''}`} key={ticket.id} onClick={() => selectTicket(ticket.id)}><span className="queue-indicator" /><div><b>{getAsset(ticket.assetId)[1]}</b><small>{ticket.id} · {ticket.assetId} · {ticket.reporter}</small><small className="queue-issue">{ticket.issue}</small><SlaIndicator ticket={ticket} compact /></div><Status status={ticket.status} /></button>) : <p className="empty">Aucun incident dans cette catégorie.</p>}</div>
       </section>
-      {selected && <Detail detailRef={detailRef} onBackToQueue={returnToQueue} showMobileBack={Capacitor.isNativePlatform()} ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} updateError={updateError} technicians={technicians} assignmentId={assignmentId} setAssignmentId={setAssignmentId} assignTicket={assignTicket} assignmentBusy={assignmentBusy} />}
+      {selected && <Detail detailRef={detailRef} onBackToQueue={returnToQueue} showMobileBack={Capacitor.isNativePlatform()} ticket={selected} user={user} onOpenChat={onOpenChat} update={update} escalate={escalate} savePlaybook={savePlaybook} saveResolutionArticle={saveResolutionArticle} updateError={updateError} technicians={technicians} assignmentId={assignmentId} setAssignmentId={setAssignmentId} assignTicket={assignTicket} assignmentBusy={assignmentBusy} />}
     </section>}
   </>
+}
+
+function ResolutionKnowledge({ articles, error, reload }) {
+  const [query, setQuery] = useState('')
+  const normalized = query.trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+  const visible = articles.filter((article) => [article.title, article.asset_id, getAsset(article.asset_id)[1], article.issue, article.solution, article.playbook_title].join(' ').toLocaleLowerCase('fr').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').includes(normalized))
+  return <section className="card knowledge-card"><div className="card-heading"><span className="heading-icon">✦</span><div><p className="eyebrow">SAVOIR DE L’ÉQUIPE</p><h2>Base de solutions</h2></div><span className="filter-count">{articles.length} solutions</span></div><p className="subtle">Retrouvez les réparations validées lors d’interventions précédentes.</p><label className="ticket-search"><span aria-hidden="true">⌕</span><input type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Rechercher un problème, équipement ou solution…" aria-label="Rechercher dans la base de solutions" /></label>{error && <p className="form-message" role="alert">{error} <button type="button" onClick={reload}>Réessayer</button></p>}<div className="knowledge-list">{visible.map((article) => <article className="knowledge-article" key={article.id}><div className="knowledge-meta"><b>{article.title}</b><span>{article.asset_id} · {getAsset(article.asset_id)[1]}</span></div><p><b>Problème :</b> {article.issue}</p><p className="knowledge-solution">{article.solution}</p>{article.playbook_title && <small>Guide utilisé : {article.playbook_title}</small>}<small>Ajoutée le {new Date(article.created_at).toLocaleDateString('fr-FR')}</small></article>)}{!visible.length && <p className="empty">{articles.length ? 'Aucune solution ne correspond à cette recherche.' : 'Aucune solution enregistrée pour le moment. Après avoir résolu un incident, publiez sa solution depuis sa fiche.'}</p>}</div></section>
 }
 
 function TaskCenter({ user, technicians }) {
@@ -1510,7 +1537,7 @@ function TicketAnalytics({ tickets }) {
     <p className="stats-footnote">Le volume et les répartitions utilisent la date de création; le délai médian utilise la date de résolution. Les tickets historiques sans date de résolution sont exclus du calcul.</p>
   </div>
 }
-function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user, onOpenChat, update, escalate, savePlaybook, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
+function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user, onOpenChat, update, escalate, savePlaybook, saveResolutionArticle, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
   const [note, setNote] = useState(ticket.note)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
   const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
@@ -1520,7 +1547,12 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
   const [aiBusy, setAiBusy] = useState(false)
   const [aiError, setAiError] = useState('')
   const [aiAdvice, setAiAdvice] = useState(null)
+  const [articleTitle, setArticleTitle] = useState('')
+  const [articleSolution, setArticleSolution] = useState(ticket.note || ticket.playbook?.note || '')
+  const [articleBusy, setArticleBusy] = useState(false)
+  const [articleMessage, setArticleMessage] = useState('')
   useEffect(() => setNote(ticket.note), [ticket.id, ticket.note])
+  useEffect(() => { setArticleTitle(''); setArticleSolution(ticket.note || ticket.playbook?.note || ''); setArticleMessage('') }, [ticket.id, ticket.note, ticket.playbook?.updatedAt])
   useEffect(() => {
     setPlaybookId(ticket.playbook?.playbookId || suggestPlaybook(ticket))
     setCheckedSteps(ticket.playbook?.checkedSteps || [])
@@ -1601,6 +1633,7 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
       <label className="field playbook-note">Résultat du diagnostic<textarea value={playbookNote} onChange={(event) => { setPlaybookNote(event.target.value); setPlaybookMessage('') }} placeholder="Résultats, messages d’erreur, actions effectuées…" /></label>
       <div className="playbook-footer"><button type="button" className="playbook-save" onClick={saveCurrentPlaybook} disabled={playbookSaving}>{playbookSaving ? 'Enregistrement…' : 'Enregistrer le diagnostic'}</button>{playbookMessage && <small className={playbookMessage.startsWith('Diagnostic enregistré') ? 'playbook-success' : 'playbook-error'} role="status">{playbookMessage}</small>}</div>
     </section>}
+    {ticket.status === 'Résolu' && <section className="article-save-card"><p className="eyebrow">PARTAGER LA SOLUTION</p><h3>Ajouter à la base de connaissances</h3><p>Conservez cette réparation pour aider l’équipe sur un prochain incident similaire.</p><label className="field">Titre de la solution<input value={articleTitle} onChange={(event) => setArticleTitle(event.target.value)} placeholder="Ex. Reconnecter une imprimante réseau" /></label><label className="field">Étapes de résolution<textarea value={articleSolution} onChange={(event) => setArticleSolution(event.target.value)} placeholder="Décrivez les étapes qui ont résolu le problème…" /></label><button className="playbook-save" disabled={articleBusy || !articleTitle.trim() || !articleSolution.trim()} onClick={async () => { setArticleBusy(true); setArticleMessage(''); const result = await saveResolutionArticle(ticket, { title: articleTitle.trim(), solution: articleSolution.trim() }); setArticleBusy(false); setArticleMessage(result.ok ? 'Solution publiée dans la base.' : result.error || 'Impossible d’enregistrer la solution.') }}>{articleBusy ? 'Publication…' : 'Publier la solution'}</button>{articleMessage && <small role="status">{articleMessage}</small>}</section>}
     <EscalationTimeline ticket={ticket} />
     {ticket.attachments?.length > 0 && <AttachmentList attachments={ticket.attachments} />}
     <div className="info"><div><small>DÉPARTEMENT</small><b>{asset[2]}</b></div><div><small>RESPONSABLE</small><b>{ticket.assignee || 'À attribuer'}</b></div></div>
