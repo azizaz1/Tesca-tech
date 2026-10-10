@@ -55,6 +55,8 @@ Technicians, IT managers, and admins can publish a reusable solution from a reso
 
 IT managers and admins can upload a facility floor plan from desktop or mobile, then drag the numbered equipment markers into position. The uploaded map and marker positions are shared with authenticated users across devices. Apply `supabase/migrations/020_shared_facility_map.sql` after migration 019 to create the private map storage bucket and shared map settings.
 
+IT managers and admins can remove an unused asset from its selected item card on the map. Apply `supabase/migrations/024_manager_delete_assets.sql` to enable this; assets already referenced by incidents cannot be deleted.
+
 ## Incident sync and Android push notifications
 
 The app stores incidents in Supabase and refreshes both employee and technician views in real time. Android push notifications are sent to all technicians when a new incident is submitted and to the reporting employee when its status changes (including **En cours** and **Résolu**).

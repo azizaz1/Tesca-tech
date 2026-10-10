@@ -887,10 +887,17 @@ function TaskCenter({ user, technicians }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [message, setMessage] = useState('')
+  const [taskNotice, setTaskNotice] = useState(null)
+  const [createdTaskId, setCreatedTaskId] = useState(null)
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
-  const [equipment, setEquipment] = useState('')
-  const [assignedTo, setAssignedTo] = useState('')
+  const [equipment, setEquipment] = useState([])
+  const [customEquipment, setCustomEquipment] = useState('')
+  const [customEquipmentEnabled, setCustomEquipmentEnabled] = useState(false)
+  const [availableAssets, setAvailableAssets] = useState([])
+  const [assetsLoading, setAssetsLoading] = useState(true)
+  const [assetsError, setAssetsError] = useState('')
+  const [assignedTo, setAssignedTo] = useState([])
   const [dueDate, setDueDate] = useState('')
   const [completionNotes, setCompletionNotes] = useState({})
   const canAssign = ['it_manager', 'admin'].includes(user.role)
@@ -902,6 +909,14 @@ function TaskCenter({ user, technicians }) {
   }
   useEffect(() => {
     let active = true
+    const loadAssets = async () => {
+      const { data, error: assetsLoadError } = await supabase.from('assets').select('id, name').order('id')
+      if (!active) return
+      if (assetsLoadError) setAssetsError(assetsLoadError.message)
+      else setAvailableAssets(data || [])
+      setAssetsLoading(false)
+    }
+    void loadAssets()
     const refresh = async () => {
       const { data, error: loadError } = await supabase.from('technician_tasks').select('*').order('created_at', { ascending: false })
       if (!active) return
@@ -915,16 +930,30 @@ function TaskCenter({ user, technicians }) {
       .subscribe()
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [user.id])
+  useEffect(() => {
+    if (!createdTaskId || !tasks.some((task) => task.id === createdTaskId)) return undefined
+    const timeout = window.setTimeout(() => {
+      document.getElementById(`technician-task-${createdTaskId}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      setCreatedTaskId(null)
+    }, 80)
+    return () => window.clearTimeout(timeout)
+  }, [createdTaskId, tasks])
   const createTask = async (event) => {
     event.preventDefault()
-    if (!assignedTo) { setError('Choisissez un technicien.'); return }
+    if (!assignedTo.length) { setError('Choisissez au moins un technicien.'); return }
     setSaving(true); setError(''); setMessage('')
     try {
-      const { error: createError } = await supabase.from('technician_tasks').insert({ title: title.trim(), description: description.trim(), equipment: equipment.trim(), assigned_to: assignedTo, created_by: user.id, due_date: dueDate || null })
+      const selectedEquipment = availableAssets.filter((asset) => equipment.includes(asset.id)).map((asset) => `${asset.id} — ${asset.name}`)
+      if (customEquipmentEnabled && customEquipment.trim()) selectedEquipment.push(customEquipment.trim())
+      const equipmentAssignments = selectedEquipment.length ? selectedEquipment : ['']
+      const taskRecords = assignedTo.flatMap((technicianId) => equipmentAssignments.map((taskEquipment) => ({ title: title.trim(), description: description.trim(), equipment: taskEquipment, assigned_to: technicianId, created_by: user.id, due_date: dueDate || null })))
+      const { data: createdTasks, error: createError } = await supabase.from('technician_tasks').insert(taskRecords).select('id')
       if (createError) throw createError
-      setTitle(''); setDescription(''); setEquipment(''); setDueDate('')
+      setTitle(''); setDescription(''); setEquipment([]); setCustomEquipment(''); setCustomEquipmentEnabled(false); setAssignedTo([]); setDueDate('')
       setMessage('T\u00e2che attribu\u00e9e. Le technicien recevra une notification dans l\u2019application.')
       await loadTasks()
+      setCreatedTaskId(createdTasks?.[0]?.id)
+      setTaskNotice({ title: 'Tâche(s) attribuée(s) avec succès !', text: `${taskRecords.length} tâche(s) ajoutée(s) à la liste pour ${assignedTo.length} technicien(s). Chaque technicien recevra une notification.`, reference: title.trim() })
     } catch (createError) {
       setError(createError?.message || 'Impossible de cr\u00e9er la t\u00e2che. V\u00e9rifiez votre connexion et r\u00e9essayez.')
     } finally {
@@ -947,8 +976,8 @@ function TaskCenter({ user, technicians }) {
         <label className="task-field">Titre<input required minLength="3" maxLength="160" value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Ex. Vérifier l’antivirus des postes" /></label>
         <label className="task-field">Consignes<textarea maxLength="2000" rows="3" value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Détaillez les vérifications à effectuer." /></label>
         <div className="task-form-row">
-          <label className="task-field">Équipement / zone<input maxLength="160" value={equipment} onChange={(event) => setEquipment(event.target.value)} placeholder="Ex. Tous les PC Finance" /></label>
-          <label className="task-field">Technicien<select required value={assignedTo} onChange={(event) => setAssignedTo(event.target.value)}><option value="">Choisir un technicien</option>{technicians.filter((person) => person.role === 'technician').map((person) => <option key={person.id} value={person.id}>{person.full_name}</option>)}</select></label>
+          <div className="task-field">Équipement / zone<div className="task-choice-list">{assetsLoading ? <small>Chargement des équipements…</small> : availableAssets.map((asset) => <label className="task-choice" key={asset.id}><input type="checkbox" checked={equipment.includes(asset.id)} onChange={(event) => setEquipment((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} /><span>{asset.id} — {asset.name}</span></label>)}</div>{assetsError && <small>Liste indisponible : {assetsError}</small>}<label className="task-choice"><input type="checkbox" checked={customEquipmentEnabled} onChange={(event) => setCustomEquipmentEnabled(event.target.checked)} /><span>Autre zone (saisie libre)</span></label>{customEquipmentEnabled && <input maxLength="160" value={customEquipment} onChange={(event) => setCustomEquipment(event.target.value)} placeholder="Ex. Tous les PC Finance" />}</div>
+          <div className="task-field">Techniciens<div className="task-technician-actions"><button type="button" onClick={() => setAssignedTo(technicians.filter((person) => person.role === 'technician').map((person) => person.id))}>Tout sélectionner</button><button type="button" onClick={() => setAssignedTo([])}>Tout désélectionner</button></div><div className="task-choice-list">{technicians.filter((person) => person.role === 'technician').map((person) => <label className="task-choice" key={person.id}><input type="checkbox" checked={assignedTo.includes(person.id)} onChange={(event) => setAssignedTo((current) => event.target.checked ? [...current, person.id] : current.filter((id) => id !== person.id))} /><span>{person.full_name}</span></label>)}</div></div>
           <label className="task-field">Date limite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         <button type="submit" className="primary-action task-submit" disabled={saving}>{saving ? 'Attribution...' : 'Attribuer la tâche'} <span aria-hidden="true">→</span></button>
@@ -957,7 +986,7 @@ function TaskCenter({ user, technicians }) {
     <section className="card task-list-card">
       <div className="card-heading"><span className="heading-icon heading-icon-soft">✓</span><div><p className="eyebrow">SUIVI DES MISSIONS</p><h2>{canAssign ? 'Tâches de l’équipe' : 'Mes tâches'}</h2></div></div>
       {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="task-success" role="status">{message}</p>}
-      {loading ? <p className="empty">Chargement des tâches...</p> : tasks.length ? <div className="task-list">{tasks.map((task) => <article className="task-row" key={task.id}>
+      {loading ? <p className="empty">Chargement des tâches...</p> : tasks.length ? <div className="task-list">{tasks.map((task) => <article id={`technician-task-${task.id}`} className="task-row" key={task.id}>
         <div className="task-row-head"><div><h3>{task.title}</h3><small>{canAssign ? `Attribuée à ${names[task.assigned_to] || 'Technicien'}` : 'Mission attribuée par le responsable IT'}{task.equipment ? ` · ${task.equipment}` : ''}</small></div><span className={`task-status task-status-${task.status}`}>{statusLabels[task.status] || task.status}</span></div>
         {task.description && <p className="task-description">{task.description}</p>}
         <div className="task-row-meta"><span>Créée le {new Date(task.created_at).toLocaleDateString('fr-FR')}</span>{task.due_date && <span>Échéance : {new Date(`${task.due_date}T00:00:00`).toLocaleDateString('fr-FR')}</span>}</div>
@@ -965,6 +994,7 @@ function TaskCenter({ user, technicians }) {
         {task.status === 'completed' && task.completion_note && <p className="task-completion-note"><b>Compte rendu :</b> {task.completion_note}</p>}
       </article>)}</div> : <p className="empty">{canAssign ? 'Aucune tâche attribuée pour le moment.' : 'Aucune tâche ne vous a été attribuée pour le moment.'}</p>}
     </section>
+    {taskNotice && <SuccessDialog reference={taskNotice.reference} title={taskNotice.title} body={taskNotice.text} kicker="TÂCHE ATTRIBUÉE" continueLabel="Voir la tâche" onClose={() => setTaskNotice(null)} />}
   </section>
 }
 
@@ -1224,6 +1254,7 @@ function FacilityMap({ tickets, user }) {
   const [addingAsset, setAddingAsset] = useState(false)
   const [newAsset, setNewAsset] = useState({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
   const [assetBusy, setAssetBusy] = useState(false)
+  const [assetNotice, setAssetNotice] = useState(null)
   const canEdit = ['it_manager', 'admin'].includes(user?.role)
 
   useEffect(() => {
@@ -1235,8 +1266,9 @@ function FacilityMap({ tickets, user }) {
         supabase.from('assets').select('id, name, kind, department, location').order('id'),
       ])
       if (!active) return
-      if (!assetsResult.error && assetsResult.data?.length) {
+      if (!assetsResult.error) {
         setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+        setSelectedAssetId((current) => current && assetsResult.data.some((asset) => asset.id === current) ? current : null)
       }
       if (settingsResult.error) setMapError(settingsResult.error.message)
       else {
@@ -1315,13 +1347,45 @@ function FacilityMap({ tickets, user }) {
     if (!record.id || !record.name || !record.kind || !record.department || !record.location) return
     setAssetBusy(true)
     setMapError('')
+    setAssetNotice(null)
     const { error } = await supabase.from('assets').insert(record)
-    if (error) setMapError(error.message)
+    if (error) {
+      setMapError(error.message)
+      setAssetNotice({ type: 'error', title: 'Ajout impossible', text: error.message })
+    }
     else {
       setNewAsset({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
       setAddingAsset(false)
       const { data } = await supabase.from('assets').select('id, name, kind, department, location').order('id')
       if (data) setMapAssets(data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+      setAssetNotice({ type: 'success', title: 'Équipement ajouté', text: `« ${record.name} » a été ajouté à la carte du site.` })
+    }
+    setAssetBusy(false)
+  }
+  const deleteAsset = async (asset) => {
+    if (!canEdit || !asset || !window.confirm(`Supprimer l’équipement ${asset[0]} — ${asset[1]} de la carte ?`)) return
+    setAssetBusy(true)
+    setMapError('')
+    setAssetNotice(null)
+    const { error } = await supabase.from('assets').delete().eq('id', asset[0])
+    if (error) {
+      const message = error.message.toLowerCase().includes('foreign key')
+        ? 'Cet équipement est lié à un incident et ne peut pas être supprimé.'
+        : error.message
+      setMapError(message)
+      setAssetNotice({ type: 'error', title: 'Suppression impossible', text: message })
+    } else {
+      await supabase.from('facility_map_positions').delete().eq('asset_id', asset[0])
+      setMapAssets((current) => current.filter((item) => item[0] !== asset[0]))
+      setSelectedAssetId(null)
+      setPositions((current) => {
+        const next = { ...current }
+        delete next[asset[0]]
+        positionsRef.current = next
+        localStorage.setItem('facility-map-positions', JSON.stringify(next))
+        return next
+      })
+      setAssetNotice({ type: 'success', title: 'Équipement supprimé', text: `« ${asset[1]} » a été retiré de la carte du site.` })
     }
     setAssetBusy(false)
   }
@@ -1408,8 +1472,9 @@ function FacilityMap({ tickets, user }) {
         {mapAssets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)); return <button type="button" onPointerDown={(event) => { if (!canEdit || mapPointers.current.size > 1) return; if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); draggedAsset.current = { id: asset[0], pointerId: event.pointerId } }} className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} - ${asset[3]}`} aria-label={`Equipement ${index + 1}: ${asset[1]} (${asset[0]})`}>{index + 1}</button> })}
       </div>
       <div className="facility-map-asset-index" aria-label="Numeros des equipements">{mapAssets.map((asset, index) => <button type="button" className={selectedAssetId === asset[0] ? 'active' : ''} key={asset[0]} onClick={() => setSelectedAssetId(asset[0])}><b>{index + 1}</b><span>{asset[0]} · {asset[1]}</span></button>)}</div>
-      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span>Equipement selectionne</span></div><p className="map-location-edit">Emplacement : {selectedAsset[3]}</p></section>}
+      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span>Equipement selectionne</span></div><p className="map-location-edit">Emplacement : {selectedAsset[3]}</p>{canEdit && <button type="button" className="delete-map-asset" onClick={() => void deleteAsset(selectedAsset)} disabled={assetBusy}>Supprimer</button>}</section>}
     </div>
+    {assetNotice && <MapAssetResultDialog notice={assetNotice} onClose={() => setAssetNotice(null)} />}
   </section>
 }
 function TicketAnalytics({ tickets }) {
@@ -1959,16 +2024,30 @@ function SlaIndicator({ ticket, compact = false, now: suppliedNow }) {
   </span>
 }
 
-function SuccessDialog({ reference, native = false, onClose }) {
+function MapAssetResultDialog({ notice, onClose }) {
+  const succeeded = notice.type === 'success'
+  return <div className="success-overlay">
+    <section className={`success-dialog map-asset-result-dialog${succeeded ? '' : ' map-asset-result-error'}`} role="alertdialog" aria-modal="true" aria-labelledby="map-asset-result-title" aria-describedby="map-asset-result-copy">
+      <button type="button" className="success-dialog-close" onClick={onClose} aria-label="Fermer">×</button>
+      <div className="success-emblem" aria-hidden="true"><svg viewBox="0 0 48 48">{succeeded ? <path d="m13 24 7 7 16-17" /> : <path d="M15 15l18 18M33 15L15 33" />}</svg></div>
+      <p className="success-kicker">CARTE DU SITE</p>
+      <h2 id="map-asset-result-title">{notice.title}</h2>
+      <p className="success-copy" id="map-asset-result-copy">{notice.text}</p>
+      <button type="button" className="success-continue" onClick={onClose}>Continuer</button>
+    </section>
+  </div>
+}
+
+function SuccessDialog({ reference, native = false, title, body, kicker, continueLabel, onClose }) {
   return <div className="success-overlay">
     <section className="success-dialog" role="dialog" aria-modal="true" aria-labelledby="success-dialog-title">
       <button type="button" className="success-dialog-close" onClick={onClose} aria-label="Fermer">×</button>
       <div className="success-emblem" aria-hidden="true"><svg viewBox="0 0 48 48"><path d="m13 24 7 7 16-17" /></svg></div>
-      <p className="success-kicker">DEMANDE TRANSMISE</p>
-      <h2 id="success-dialog-title">Incident ajouté avec succès !</h2>
-      <p className="success-copy">Un technicien a été informé. Vous pouvez suivre votre demande dans « Mes demandes ».</p>
+      <p className="success-kicker">{kicker || 'DEMANDE TRANSMISE'}</p>
+      <h2 id="success-dialog-title">{title || 'Incident ajouté avec succès !'}</h2>
+      <p className="success-copy">{body || 'Un technicien a été informé. Vous pouvez suivre votre demande dans « Mes demandes ».'}</p>
       {reference && <div className="success-reference"><small>RÉFÉRENCE</small><b>{reference}</b></div>}
-      <button type="button" className="success-continue" onClick={onClose}>{native ? 'Voir ma demande' : 'Continuer'}</button>
+      <button type="button" className="success-continue" onClick={onClose}>{continueLabel || (native ? 'Voir ma demande' : 'Continuer')}</button>
     </section>
   </div>
 }
