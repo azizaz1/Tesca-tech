@@ -848,6 +848,7 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
       {isAdmin && <button type="button" role="tab" id="tab-admin-branding" aria-controls="panel-admin-branding" aria-selected={activePage === 'branding'} className={activePage === 'branding' ? 'active' : ''} onClick={() => setActivePage('branding')}>Identité</button>}
       {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
       <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')} aria-label={`Tâches${unreadTaskCount ? `, ${unreadTaskCount} nouvelle${unreadTaskCount > 1 ? 's' : ''}` : ''}`}>{'T\u00e2ches'}{unreadTaskCount > 0 && <span className="task-tab-badge">{unreadTaskCount > 9 ? '9+' : unreadTaskCount}</span>}</button>
+      <button type="button" role="tab" id="tab-inventory" aria-controls="panel-inventory" aria-selected={activePage === 'inventory'} className={activePage === 'inventory' ? 'active' : ''} onClick={() => setActivePage('inventory')}>Stock</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
       <button type="button" role="tab" id="tab-knowledge" aria-controls="panel-knowledge" aria-selected={activePage === 'knowledge'} className={activePage === 'knowledge' ? 'active' : ''} onClick={() => setActivePage('knowledge')}>Base de solutions</button>
       <button type="button" role="tab" id="tab-map" aria-controls="panel-map" aria-selected={activePage === 'map'} className={activePage === 'map' ? 'active' : ''} onClick={() => setActivePage('map')}>Carte du site</button>
@@ -856,6 +857,7 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
     {isAdmin && activePage === 'admin-users' && <div role="tabpanel" id="panel-admin-users" aria-labelledby="tab-admin-users"><AdminUsers currentUserId={user.id} /></div>}
     {isAdmin && activePage === 'branding' && <div role="tabpanel" id="panel-admin-branding" aria-labelledby="tab-admin-branding"><AdminBranding brand={brand} onBrandChanged={onBrandChanged} /></div>}
     {activePage === 'tasks' && <div role="tabpanel" id="panel-tasks" aria-labelledby="tab-tasks"><TaskCenter user={user} technicians={technicians} /></div>}
+    {activePage === 'inventory' && <div role="tabpanel" id="panel-inventory" aria-labelledby="tab-inventory"><InventoryCenter user={user} tickets={tickets} /></div>}
     {activePage === 'knowledge' && <div role="tabpanel" id="panel-knowledge" aria-labelledby="tab-knowledge"><ResolutionKnowledge articles={knowledge} error={knowledgeError} reload={loadKnowledge} /></div>}
     {activePage === 'stats' && <div role="tabpanel" id="panel-stats" aria-labelledby="tab-stats">
       <TicketAnalytics tickets={tickets} />
@@ -978,7 +980,7 @@ function TaskCenter({ user, technicians }) {
         <div className="task-form-row">
           <div className="task-field">Équipement / zone<div className="task-choice-list">{assetsLoading ? <small>Chargement des équipements…</small> : availableAssets.map((asset) => <label className="task-choice" key={asset.id}><input type="checkbox" checked={equipment.includes(asset.id)} onChange={(event) => setEquipment((current) => event.target.checked ? [...current, asset.id] : current.filter((id) => id !== asset.id))} /><span>{asset.id} — {asset.name}</span></label>)}</div>{assetsError && <small>Liste indisponible : {assetsError}</small>}<label className="task-choice"><input type="checkbox" checked={customEquipmentEnabled} onChange={(event) => setCustomEquipmentEnabled(event.target.checked)} /><span>Autre zone (saisie libre)</span></label>{customEquipmentEnabled && <input maxLength="160" value={customEquipment} onChange={(event) => setCustomEquipment(event.target.value)} placeholder="Ex. Tous les PC Finance" />}</div>
           <div className="task-field">Techniciens<div className="task-technician-actions"><button type="button" onClick={() => setAssignedTo(technicians.filter((person) => person.role === 'technician').map((person) => person.id))}>Tout sélectionner</button><button type="button" onClick={() => setAssignedTo([])}>Tout désélectionner</button></div><div className="task-choice-list">{technicians.filter((person) => person.role === 'technician').map((person) => <label className="task-choice" key={person.id}><input type="checkbox" checked={assignedTo.includes(person.id)} onChange={(event) => setAssignedTo((current) => event.target.checked ? [...current, person.id] : current.filter((id) => id !== person.id))} /><span>{person.full_name}</span></label>)}</div></div>
-          <label className="task-field">Date limite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
+          <label className="task-field task-due-date-field">Date limite<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} /></label>
         </div>
         <button type="submit" className="primary-action task-submit" disabled={saving}>{saving ? 'Attribution...' : 'Attribuer la tâche'} <span aria-hidden="true">→</span></button>
       </form>
@@ -995,6 +997,164 @@ function TaskCenter({ user, technicians }) {
       </article>)}</div> : <p className="empty">{canAssign ? 'Aucune tâche attribuée pour le moment.' : 'Aucune tâche ne vous a été attribuée pour le moment.'}</p>}
     </section>
     {taskNotice && <SuccessDialog reference={taskNotice.reference} title={taskNotice.title} body={taskNotice.text} kicker="TÂCHE ATTRIBUÉE" continueLabel="Voir la tâche" onClose={() => setTaskNotice(null)} />}
+  </section>
+}
+
+const inventoryDateString = (value) => {
+  const date = new Date(value)
+  date.setMinutes(date.getMinutes() - date.getTimezoneOffset())
+  return date.toISOString().slice(0, 10)
+}
+
+const loadAllInventoryMovements = async () => {
+  const all = []
+  for (let offset = 0; ; offset += 1000) {
+    const { data, error } = await supabase.from('inventory_movements').select('*').order('created_at', { ascending: false }).order('id', { ascending: false }).range(offset, offset + 999)
+    if (error) return { data: null, error }
+    all.push(...(data || []))
+    if (!data || data.length < 1000) return { data: all, error: null }
+  }
+}
+
+function InventoryCenter({ user, tickets }) {
+  const [items, setItems] = useState([])
+  const [movements, setMovements] = useState([])
+  const [equipment, setEquipment] = useState([])
+  const [team, setTeam] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+  const [newItem, setNewItem] = useState({ code: '', name: '', color: '', minStock: '2' })
+  const [itemId, setItemId] = useState('')
+  const [movementType, setMovementType] = useState('usage')
+  const [quantity, setQuantity] = useState('1')
+  const [adjustmentDirection, setAdjustmentDirection] = useState('add')
+  const [assetId, setAssetId] = useState('')
+  const [ticketId, setTicketId] = useState('')
+  const [note, setNote] = useState('')
+  const [fromDate, setFromDate] = useState(() => { const date = new Date(); date.setDate(1); return inventoryDateString(date) })
+  const [toDate, setToDate] = useState(() => inventoryDateString(new Date()))
+  const [printReady, setPrintReady] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const refresh = async () => {
+      const [itemsResult, movementsResult, equipmentResult, teamResult] = await Promise.all([
+        supabase.from('inventory_items').select('*').eq('active', true).order('code'),
+        loadAllInventoryMovements(),
+        supabase.from('assets').select('id, name').order('id'),
+        supabase.from('profiles').select('id, full_name').in('role', ['technician', 'it_manager', 'admin']).order('full_name'),
+      ])
+      if (!active) return
+      if (itemsResult.error) setError(itemsResult.error.message)
+      else {
+        setItems(itemsResult.data || [])
+      }
+      if (movementsResult.error) setError(movementsResult.error.message)
+      else setMovements(movementsResult.data || [])
+      if (equipmentResult.error) setError(equipmentResult.error.message)
+      else setEquipment(equipmentResult.data || [])
+      if (teamResult.data) setTeam(teamResult.data)
+      setLoading(false)
+    }
+    void refresh()
+    const channel = supabase.channel(`inventory-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_items' }, () => void refresh())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'inventory_movements' }, () => void refresh())
+      .subscribe()
+    return () => { active = false; void supabase.removeChannel(channel) }
+  }, [user.id])
+  useEffect(() => {
+    if (!itemId && items.length) setItemId(items[0].id)
+  }, [itemId, items])
+
+  useEffect(() => {
+    if (!printReady) return undefined
+    const finish = () => setPrintReady(false)
+    window.addEventListener('afterprint', finish)
+    const timeout = window.setTimeout(() => window.print(), 180)
+    return () => { window.clearTimeout(timeout); window.removeEventListener('afterprint', finish) }
+  }, [printReady])
+
+  const balanceByItem = Object.fromEntries(items.map((item) => [item.id, movements.filter((movement) => movement.item_id === item.id).reduce((sum, movement) => sum + movement.quantity_change, 0)]))
+  const itemById = Object.fromEntries(items.map((item) => [item.id, item]))
+  const equipmentById = Object.fromEntries(equipment.map((asset) => [asset.id, asset]))
+  const nameById = Object.fromEntries(team.map((person) => [person.id, person.full_name]))
+  const movementLabel = { arrival: 'Arrivage', usage: 'Utilisation', adjustment: 'Ajustement' }
+  const periodMovements = movements.filter((movement) => {
+    const day = inventoryDateString(movement.created_at)
+    return (!fromDate || day >= fromDate) && (!toDate || day <= toDate)
+  })
+  const stockAtDate = (id) => movements.filter((movement) => movement.item_id === id && (!toDate || inventoryDateString(movement.created_at) <= toDate)).reduce((sum, movement) => sum + movement.quantity_change, 0)
+
+  const addInventoryItem = async (event) => {
+    event.preventDefault()
+    setSaving(true); setError(''); setMessage('')
+    const record = { code: newItem.code.trim().toUpperCase(), name: newItem.name.trim(), color: newItem.color.trim(), min_stock: Number(newItem.minStock) || 0, created_by: user.id }
+    const { data, error: insertError } = await supabase.from('inventory_items').insert(record).select().single()
+    if (insertError) setError(insertError.message)
+    else {
+      setItems((current) => [...current, data].sort((a, b) => a.code.localeCompare(b.code)))
+      setItemId(data.id)
+      setNewItem({ code: '', name: '', color: '', minStock: '2' })
+      setMessage(`Consommable « ${data.name} » ajouté.`)
+    }
+    setSaving(false)
+  }
+
+  const recordMovement = async (event) => {
+    event.preventDefault()
+    setSaving(true); setError(''); setMessage('')
+    const requiredStock = Number(quantity)
+    if (movementType === 'usage' && requiredStock > (balanceByItem[itemId] || 0)) {
+      setError(`Stock insuffisant : ${requiredStock} unités nécessaires, ${balanceByItem[itemId] || 0} disponibles.`)
+      setSaving(false)
+      return
+    }
+    const { error: movementError } = await supabase.rpc('record_inventory_movement', {
+      p_item_id: itemId,
+      p_movement_type: movementType,
+      p_quantity: Number(quantity),
+      p_adjustment_direction: adjustmentDirection,
+      p_asset_id: movementType === 'usage' ? assetId || null : null,
+      p_ticket_id: ticketId || null,
+      p_note: note.trim(),
+    })
+    if (movementError) setError(movementError.message)
+    else {
+      setQuantity('1'); setAssetId(''); setTicketId(''); setNote('')
+      setMessage('Mouvement enregistr\u00e9. Vous pouvez remplir le formulaire pour une autre intervention.')
+      const { data } = await loadAllInventoryMovements()
+      if (data) setMovements(data)
+    }
+    setSaving(false)
+  }
+
+  return <section className="inventory-center">
+    <section className="card inventory-overview">
+      <div className="card-heading"><span className="heading-icon heading-icon-soft">▤</span><div><p className="eyebrow">CONSOMMABLES INFORMATIQUES</p><h2>Stock et mouvements</h2></div><button type="button" className="inventory-pdf-button" onClick={() => setPrintReady(true)} disabled={loading}>Générer PDF</button></div>
+      <p className="card-intro">Suivez les arrivages, les consommations et les niveaux disponibles.</p>
+      {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="task-success" role="status">{message}</p>}
+      {loading ? <p className="empty">Chargement du stock…</p> : items.length ? <div className="inventory-stock-grid">{items.map((item) => {
+        const balance = balanceByItem[item.id] || 0
+        const low = balance <= item.min_stock
+        return <article className={`inventory-stock-card${low ? ' inventory-stock-low' : ''}`} key={item.id}><div><small>{item.code}{item.color ? ` · ${item.color}` : ''}</small><h3>{item.name}</h3></div><b>{balance}<small> unités</small></b><span>{low ? 'Stock bas' : 'Disponible'}{item.min_stock ? ` · seuil ${item.min_stock}` : ''}</span></article>
+      })}</div> : <p className="empty">Aucun consommable enregistré. Ajoutez un article pour commencer le suivi.</p>}
+    </section>
+
+    <div className="inventory-forms">
+      <section className="card inventory-form-card"><div className="card-heading"><div><p className="eyebrow">CATALOGUE</p><h2>Ajouter un consommable</h2></div></div>
+        <form onSubmit={(event) => void addInventoryItem(event)}><label className="task-field">Référence<input required maxLength={80} value={newItem.code} onChange={(event) => setNewItem((current) => ({ ...current, code: event.target.value }))} placeholder="Ex. TN227C" /></label><label className="task-field">Modèle / description<input required maxLength={160} value={newItem.name} onChange={(event) => setNewItem((current) => ({ ...current, name: event.target.value }))} placeholder="Ex. Toner imprimante C257i" /></label><div className="inventory-form-row"><label className="task-field">Couleur<input maxLength={80} value={newItem.color} onChange={(event) => setNewItem((current) => ({ ...current, color: event.target.value }))} placeholder="Noir, cyan…" /></label><label className="task-field">Alerte stock bas<input type="number" min="0" max="100000" value={newItem.minStock} onChange={(event) => setNewItem((current) => ({ ...current, minStock: event.target.value }))} /></label></div><button type="submit" className="primary-action" disabled={saving}>Ajouter au stock</button></form>
+      </section>
+      <section className="card inventory-form-card"><div className="card-heading"><div><p className="eyebrow">JOURNAL DE STOCK</p><h2>Enregistrer un mouvement</h2></div></div>
+        <form onSubmit={(event) => void recordMovement(event)}><label className="task-field">Consommable<select required value={itemId} onChange={(event) => setItemId(event.target.value)}><option value="">Choisir un consommable</option>{items.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}{item.color ? ` (${item.color})` : ''}</option>)}</select></label><div className="inventory-form-row"><label className="task-field">Mouvement<select value={movementType} onChange={(event) => setMovementType(event.target.value)}><option value="usage">Utilisation</option><option value="arrival">Arrivage</option><option value="adjustment">Ajustement</option></select></label><label className="task-field">Quantité<input required type="number" min="1" max="100000" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label></div>{movementType === 'adjustment' && <label className="task-field">Correction<select value={adjustmentDirection} onChange={(event) => setAdjustmentDirection(event.target.value)}><option value="add">Ajouter au stock</option><option value="remove">Retirer du stock</option></select></label>}{movementType === 'usage' && <><label className="task-field">Équipement concerné<select required value={assetId} onChange={(event) => setAssetId(event.target.value)}><option value="">Choisir un seul équipement</option>{equipment.map((asset) => <option key={asset.id} value={asset.id}>{asset.id} · {asset.name}</option>)}</select></label><p className="inventory-equipment-hint">Choisissez un équipement, enregistrez la quantité utilisée, puis recommencez pour un autre.</p></>}<label className="task-field">Incident associé (facultatif)<select value={ticketId} onChange={(event) => setTicketId(event.target.value)}><option value="">Aucun incident</option>{tickets.map((ticket) => <option key={ticket.dbId} value={ticket.dbId}>{ticket.id} · {ticket.issue.slice(0, 70)}</option>)}</select></label><label className="task-field">Note (facultatif)<input maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Détail du mouvement" /></label><button type="submit" className="primary-action" disabled={saving || !items.length || (movementType === 'usage' && !assetId)}>{saving ? 'Enregistrement…' : 'Enregistrer le mouvement'}</button></form>
+      </section>
+    </div>
+
+    <section className="card inventory-history"><div className="card-heading"><div><p className="eyebrow">HISTORIQUE</p><h2>Mouvements de stock</h2></div></div><div className="inventory-date-filters"><label className="task-field">Depuis<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="task-field">Jusqu’au<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{periodMovements.length ? <div className="inventory-table-scroll"><table className="inventory-table"><thead><tr><th>Date</th><th>Mouvement</th><th>Article</th><th>Quantité</th><th>Équipement</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || 'Article' } · {itemById[movement.item_id]?.name || ''}</td><td className={movement.quantity_change > 0 ? 'inventory-quantity-in' : 'inventory-quantity-out'}>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table></div> : <p className="empty">Aucun mouvement pour cette période.</p>}</section>
+
+    {printReady && <section className="inventory-print-report"><h1>Tesca Tech — État du stock</h1><p>Depuis le {fromDate || 'le début'} · Situation au {toDate || "aujourd'hui"}</p><h2>État de stock</h2><table><thead><tr><th>Référence</th><th>Consommable</th><th>Couleur</th><th>Quantité disponible</th><th>Seuil</th><th>État</th></tr></thead><tbody>{items.map((item) => { const balance = stockAtDate(item.id); return <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.color || '—'}</td><td>{balance}</td><td>{item.min_stock}</td><td>{balance <= item.min_stock ? 'Stock bas' : 'Disponible'}</td></tr> })}</tbody></table><h2>Mouvements sur la période</h2><table><thead><tr><th>Date</th><th>Mouvement</th><th>Référence</th><th>Couleur</th><th>Quantité</th><th>Équipement</th><th>Incident</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR')}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || '—'} · {itemById[movement.item_id]?.name || ''}</td><td>{itemById[movement.item_id]?.color || '—'}</td><td>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{tickets.find((ticket) => ticket.dbId === movement.ticket_id)?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table><footer>Rapport généré le {new Date().toLocaleString('fr-FR')} · Tesca Tech</footer></section>}
   </section>
 }
 

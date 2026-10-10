@@ -47,6 +47,10 @@ IT managers and admins can create operational tasks separately from incident tic
 
 To enable this feature on an existing database, run `supabase/migrations/019_technician_tasks.sql` in the Supabase SQL Editor after migration `018_ticket_sla_tracking.sql`. The migration creates the task and notification tables, role-based policies, and the realtime assignment notification trigger.
 
+## Technician consumable inventory
+
+Technicians, IT managers, and admins can maintain consumables, record arrivals and usage, review stock balances and history, and generate a print-ready stock report that can be saved as a PDF. Apply `supabase/migrations/025_technician_inventory.sql` after migration 024. The migration creates the inventory catalog and movement ledger, role-based access policies, and a stock-safe movement RPC.
+
 ## Resolution knowledge base
 
 Technicians, IT managers, and admins can publish a reusable solution from a resolved incident. Solutions include a title, the reported problem, equipment, and the technician's resolution steps. The support team can search saved solutions by title, equipment, problem, or fix. Run `supabase/migrations/023_resolution_knowledge_base.sql` after migration 022 to enable the shared table and role-based access policies.
