@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Capacitor } from '@capacitor/core'
+import { Capacitor, registerPlugin } from '@capacitor/core'
 import { PushNotifications } from '@capacitor/push-notifications'
 import { SpeechRecognition } from '@capgo/capacitor-speech-recognition'
 import './App.css'
@@ -7,6 +7,8 @@ import './web.css'
 import { supabase } from './supabase'
 import tescaLogo from './assets/tesca-tescagroup-logo.jpg'
 import officeFloorplan from './assets/office-floorplan.jpg'
+
+const InventoryPdf = registerPlugin('InventoryPdf')
 
 const assets = [
   ['PC-FIN-014', 'Poste comptable', 'Finance', '2e étage · Bureau 204'],
@@ -1041,7 +1043,7 @@ function InventoryCenter({ user, tickets }) {
     let active = true
     const refresh = async () => {
       const [itemsResult, movementsResult, equipmentResult, teamResult] = await Promise.all([
-        supabase.from('inventory_items').select('*').eq('active', true).order('code'),
+        supabase.from('inventory_items').select('*').order('code'),
         loadAllInventoryMovements(),
         supabase.from('assets').select('id, name').order('id'),
         supabase.from('profiles').select('id, full_name').in('role', ['technician', 'it_manager', 'admin']).order('full_name'),
@@ -1066,11 +1068,32 @@ function InventoryCenter({ user, tickets }) {
     return () => { active = false; void supabase.removeChannel(channel) }
   }, [user.id])
   useEffect(() => {
-    if (!itemId && items.length) setItemId(items[0].id)
+    if (!itemId && items.some((item) => item.active)) setItemId(items.find((item) => item.active).id)
   }, [itemId, items])
 
   useEffect(() => {
     if (!printReady) return undefined
+    if (Capacitor.getPlatform() === 'android') {
+      let mounted = true
+      const report = document.querySelector('.inventory-print-report')
+      if (!report) {
+        setError('Could not prepare the stock report. Please try again.')
+        setPrintReady(false)
+        return undefined
+      }
+      const html = `<!doctype html><html><head><meta charset="UTF-8"><style>
+        @page{size:A4 landscape;margin:12mm}body{margin:0;color:#18221c;font:10px Arial,Helvetica,sans-serif}
+        h1{margin:0 0 5px;font-size:20px}p{margin:0 0 18px;color:#56645b}h2{margin:18px 0 8px;font-size:14px}
+        table{width:100%;border-collapse:collapse;break-inside:auto}tr{break-inside:avoid}
+        th,td{border:1px solid #ccd5ce;padding:6px 7px;text-align:left;font-size:9px;overflow-wrap:anywhere}
+        th{background:#eaf1eb}footer{margin-top:18px;color:#68746c;font-size:8px}
+      </style></head><body><main class="inventory-print-report">${report.innerHTML}</main></body></html>`
+      void InventoryPdf.print({ html, jobName: 'Tesca Tech - Stock report' })
+        .then(() => { if (mounted) setMessage('Print dialog opened. Choose Save as PDF to create the file.') })
+        .catch((cause) => { if (mounted) setError(cause?.message || 'Could not open the PDF print dialog.') })
+        .finally(() => { if (mounted) setPrintReady(false) })
+      return () => { mounted = false }
+    }
     const finish = () => setPrintReady(false)
     window.addEventListener('afterprint', finish)
     const timeout = window.setTimeout(() => window.print(), 180)
@@ -1078,6 +1101,7 @@ function InventoryCenter({ user, tickets }) {
   }, [printReady])
 
   const balanceByItem = Object.fromEntries(items.map((item) => [item.id, movements.filter((movement) => movement.item_id === item.id).reduce((sum, movement) => sum + movement.quantity_change, 0)]))
+  const activeItems = items.filter((item) => item.active)
   const itemById = Object.fromEntries(items.map((item) => [item.id, item]))
   const equipmentById = Object.fromEntries(equipment.map((asset) => [asset.id, asset]))
   const nameById = Object.fromEntries(team.map((person) => [person.id, person.full_name]))
@@ -1099,6 +1123,18 @@ function InventoryCenter({ user, tickets }) {
       setItemId(data.id)
       setNewItem({ code: '', name: '', color: '', minStock: '2' })
       setMessage(`Consommable « ${data.name} » ajouté.`)
+    }
+    setSaving(false)
+  }
+
+  const setInventoryItemActive = async (item, active) => {
+    setSaving(true); setError(''); setMessage('')
+    const { error: archiveError } = await supabase.rpc('set_inventory_item_active', { p_item_id: item.id, p_active: active })
+    if (archiveError) setError(archiveError.message)
+    else {
+      setItems((current) => current.map((entry) => entry.id === item.id ? { ...entry, active } : entry))
+      if (!active && itemId === item.id) setItemId(activeItems.find((entry) => entry.id !== item.id)?.id || '')
+      setMessage(active ? `Consumable “${item.name}” restored.` : `Consumable “${item.name}” archived. Its stock history is preserved.`)
     }
     setSaving(false)
   }
@@ -1133,14 +1169,15 @@ function InventoryCenter({ user, tickets }) {
 
   return <section className="inventory-center">
     <section className="card inventory-overview">
-      <div className="card-heading"><span className="heading-icon heading-icon-soft">▤</span><div><p className="eyebrow">CONSOMMABLES INFORMATIQUES</p><h2>Stock et mouvements</h2></div><button type="button" className="inventory-pdf-button" onClick={() => setPrintReady(true)} disabled={loading}>Générer PDF</button></div>
+      <div className="card-heading"><span className="heading-icon heading-icon-soft">▤</span><div><p className="eyebrow">CONSOMMABLES INFORMATIQUES</p><h2>Stock et mouvements</h2></div><button type="button" className="inventory-pdf-button" onClick={() => setPrintReady(true)} disabled={loading || printReady}>{printReady ? 'Preparing...' : 'Générer PDF'}</button></div>
       <p className="card-intro">Suivez les arrivages, les consommations et les niveaux disponibles.</p>
       {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="task-success" role="status">{message}</p>}
-      {loading ? <p className="empty">Chargement du stock…</p> : items.length ? <div className="inventory-stock-grid">{items.map((item) => {
+      {loading ? <p className="empty">Chargement du stock…</p> : activeItems.length ? <div className="inventory-stock-grid">{activeItems.map((item) => {
         const balance = balanceByItem[item.id] || 0
         const low = balance <= item.min_stock
-        return <article className={`inventory-stock-card${low ? ' inventory-stock-low' : ''}`} key={item.id}><div><small>{item.code}{item.color ? ` · ${item.color}` : ''}</small><h3>{item.name}</h3></div><b>{balance}<small> unités</small></b><span>{low ? 'Stock bas' : 'Disponible'}{item.min_stock ? ` · seuil ${item.min_stock}` : ''}</span></article>
+        return <article className={`inventory-stock-card${low ? ' inventory-stock-low' : ''}`} key={item.id}><div><small>{item.code}{item.color ? ` · ${item.color}` : ''}</small><h3>{item.name}</h3></div><b>{balance}<small> unités</small></b><span>{low ? 'Stock bas' : 'Disponible'}{item.min_stock ? ` · seuil ${item.min_stock}` : ''}</span><button type="button" className="inventory-archive-button" disabled={saving} onClick={() => void setInventoryItemActive(item, false)}>Archiver</button></article>
       })}</div> : <p className="empty">Aucun consommable enregistré. Ajoutez un article pour commencer le suivi.</p>}
+      {items.some((item) => !item.active) && <details className="inventory-archived"><summary>Consommables archivés ({items.filter((item) => !item.active).length})</summary><div>{items.filter((item) => !item.active).map((item) => <article key={item.id}><span><b>{item.code} · {item.name}</b><small>Stock conservé : {balanceByItem[item.id] || 0}</small></span><button type="button" disabled={saving} onClick={() => void setInventoryItemActive(item, true)}>Restaurer</button></article>)}</div></details>}
     </section>
 
     <div className="inventory-forms">
@@ -1148,18 +1185,21 @@ function InventoryCenter({ user, tickets }) {
         <form onSubmit={(event) => void addInventoryItem(event)}><label className="task-field">Référence<input required maxLength={80} value={newItem.code} onChange={(event) => setNewItem((current) => ({ ...current, code: event.target.value }))} placeholder="Ex. TN227C" /></label><label className="task-field">Modèle / description<input required maxLength={160} value={newItem.name} onChange={(event) => setNewItem((current) => ({ ...current, name: event.target.value }))} placeholder="Ex. Toner imprimante C257i" /></label><div className="inventory-form-row"><label className="task-field">Couleur<input maxLength={80} value={newItem.color} onChange={(event) => setNewItem((current) => ({ ...current, color: event.target.value }))} placeholder="Noir, cyan…" /></label><label className="task-field">Alerte stock bas<input type="number" min="0" max="100000" value={newItem.minStock} onChange={(event) => setNewItem((current) => ({ ...current, minStock: event.target.value }))} /></label></div><button type="submit" className="primary-action" disabled={saving}>Ajouter au stock</button></form>
       </section>
       <section className="card inventory-form-card"><div className="card-heading"><div><p className="eyebrow">JOURNAL DE STOCK</p><h2>Enregistrer un mouvement</h2></div></div>
-        <form onSubmit={(event) => void recordMovement(event)}><label className="task-field">Consommable<select required value={itemId} onChange={(event) => setItemId(event.target.value)}><option value="">Choisir un consommable</option>{items.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}{item.color ? ` (${item.color})` : ''}</option>)}</select></label><div className="inventory-form-row"><label className="task-field">Mouvement<select value={movementType} onChange={(event) => setMovementType(event.target.value)}><option value="usage">Utilisation</option><option value="arrival">Arrivage</option><option value="adjustment">Ajustement</option></select></label><label className="task-field">Quantité<input required type="number" min="1" max="100000" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label></div>{movementType === 'adjustment' && <label className="task-field">Correction<select value={adjustmentDirection} onChange={(event) => setAdjustmentDirection(event.target.value)}><option value="add">Ajouter au stock</option><option value="remove">Retirer du stock</option></select></label>}{movementType === 'usage' && <><label className="task-field">Équipement concerné<select required value={assetId} onChange={(event) => setAssetId(event.target.value)}><option value="">Choisir un seul équipement</option>{equipment.map((asset) => <option key={asset.id} value={asset.id}>{asset.id} · {asset.name}</option>)}</select></label><p className="inventory-equipment-hint">Choisissez un équipement, enregistrez la quantité utilisée, puis recommencez pour un autre.</p></>}<label className="task-field">Incident associé (facultatif)<select value={ticketId} onChange={(event) => setTicketId(event.target.value)}><option value="">Aucun incident</option>{tickets.map((ticket) => <option key={ticket.dbId} value={ticket.dbId}>{ticket.id} · {ticket.issue.slice(0, 70)}</option>)}</select></label><label className="task-field">Note (facultatif)<input maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Détail du mouvement" /></label><button type="submit" className="primary-action" disabled={saving || !items.length || (movementType === 'usage' && !assetId)}>{saving ? 'Enregistrement…' : 'Enregistrer le mouvement'}</button></form>
+        <form onSubmit={(event) => void recordMovement(event)}><label className="task-field">Consommable<select required value={itemId} onChange={(event) => setItemId(event.target.value)}><option value="">Choisir un consommable</option>{activeItems.map((item) => <option key={item.id} value={item.id}>{item.code} · {item.name}{item.color ? ` (${item.color})` : ''}</option>)}</select></label><div className="inventory-form-row"><label className="task-field">Mouvement<select value={movementType} onChange={(event) => setMovementType(event.target.value)}><option value="usage">Utilisation</option><option value="arrival">Arrivage</option><option value="adjustment">Ajustement</option></select></label><label className="task-field">Quantité<input required type="number" min="1" max="100000" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label></div>{movementType === 'adjustment' && <label className="task-field">Correction<select value={adjustmentDirection} onChange={(event) => setAdjustmentDirection(event.target.value)}><option value="add">Ajouter au stock</option><option value="remove">Retirer du stock</option></select></label>}{movementType === 'usage' && <><label className="task-field">Équipement concerné<select required value={assetId} onChange={(event) => setAssetId(event.target.value)}><option value="">Choisir un seul équipement</option>{equipment.map((asset) => <option key={asset.id} value={asset.id}>{asset.id} · {asset.name}</option>)}</select></label><p className="inventory-equipment-hint">Choisissez un équipement, enregistrez la quantité utilisée, puis recommencez pour un autre.</p></>}<label className="task-field">Incident associé (facultatif)<select value={ticketId} onChange={(event) => setTicketId(event.target.value)}><option value="">Aucun incident</option>{tickets.map((ticket) => <option key={ticket.dbId} value={ticket.dbId}>{ticket.id} · {ticket.issue.slice(0, 70)}</option>)}</select></label><label className="task-field">Note (facultatif)<input maxLength={500} value={note} onChange={(event) => setNote(event.target.value)} placeholder="Détail du mouvement" /></label><button type="submit" className="primary-action" disabled={saving || !activeItems.length || (movementType === 'usage' && !assetId)}>{saving ? 'Enregistrement…' : 'Enregistrer le mouvement'}</button></form>
       </section>
     </div>
 
     <section className="card inventory-history"><div className="card-heading"><div><p className="eyebrow">HISTORIQUE</p><h2>Mouvements de stock</h2></div></div><div className="inventory-date-filters"><label className="task-field">Depuis<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="task-field">Jusqu’au<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{periodMovements.length ? <div className="inventory-table-scroll"><table className="inventory-table"><thead><tr><th>Date</th><th>Mouvement</th><th>Article</th><th>Quantité</th><th>Équipement</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || 'Article' } · {itemById[movement.item_id]?.name || ''}</td><td className={movement.quantity_change > 0 ? 'inventory-quantity-in' : 'inventory-quantity-out'}>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table></div> : <p className="empty">Aucun mouvement pour cette période.</p>}</section>
 
-    {printReady && <section className="inventory-print-report"><h1>Tesca Tech — État du stock</h1><p>Depuis le {fromDate || 'le début'} · Situation au {toDate || "aujourd'hui"}</p><h2>État de stock</h2><table><thead><tr><th>Référence</th><th>Consommable</th><th>Couleur</th><th>Quantité disponible</th><th>Seuil</th><th>État</th></tr></thead><tbody>{items.map((item) => { const balance = stockAtDate(item.id); return <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.color || '—'}</td><td>{balance}</td><td>{item.min_stock}</td><td>{balance <= item.min_stock ? 'Stock bas' : 'Disponible'}</td></tr> })}</tbody></table><h2>Mouvements sur la période</h2><table><thead><tr><th>Date</th><th>Mouvement</th><th>Référence</th><th>Couleur</th><th>Quantité</th><th>Équipement</th><th>Incident</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR')}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || '—'} · {itemById[movement.item_id]?.name || ''}</td><td>{itemById[movement.item_id]?.color || '—'}</td><td>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{tickets.find((ticket) => ticket.dbId === movement.ticket_id)?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table><footer>Rapport généré le {new Date().toLocaleString('fr-FR')} · Tesca Tech</footer></section>}
+    {printReady && <section className="inventory-print-report"><h1>Tesca Tech — État du stock</h1><p>Depuis le {fromDate || 'le début'} · Situation au {toDate || "aujourd'hui"}</p><h2>État de stock</h2><table><thead><tr><th>Référence</th><th>Consommable</th><th>Couleur</th><th>Quantité disponible</th><th>Seuil</th><th>État</th></tr></thead><tbody>{activeItems.map((item) => { const balance = stockAtDate(item.id); return <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.color || '—'}</td><td>{balance}</td><td>{item.min_stock}</td><td>{balance <= item.min_stock ? 'Stock bas' : 'Disponible'}</td></tr> })}</tbody></table><h2>Mouvements sur la période</h2><table><thead><tr><th>Date</th><th>Mouvement</th><th>Référence</th><th>Couleur</th><th>Quantité</th><th>Équipement</th><th>Incident</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR')}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || '—'} · {itemById[movement.item_id]?.name || ''}</td><td>{itemById[movement.item_id]?.color || '—'}</td><td>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{tickets.find((ticket) => ticket.dbId === movement.ticket_id)?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table><footer>Rapport généré le {new Date().toLocaleString('fr-FR')} · Tesca Tech</footer></section>}
   </section>
 }
 
 function ManagerOverview({ tickets, technicians, onOpenTickets, onOpenTasks, isAdmin = false }) {
   const [now, setNow] = useState(Date.now())
+  const [slaRisks, setSlaRisks] = useState(null)
+  const [riskLoading, setRiskLoading] = useState(false)
+  const [riskError, setRiskError] = useState('')
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60000)
     return () => window.clearInterval(timer)
@@ -1171,6 +1211,47 @@ function ManagerOverview({ tickets, technicians, onOpenTickets, onOpenTasks, isA
   const overdue = active.filter((ticket) => getTicketSlaInfo(ticket, now)?.state === 'breached')
   const atRisk = active.filter((ticket) => getTicketSlaInfo(ticket, now)?.state === 'at-risk')
   const needsAttention = [...overdue, ...atRisk, ...unassigned.filter((ticket) => !overdue.includes(ticket) && !atRisk.includes(ticket))]
+  const analyzeSlaRisk = async () => {
+    setRiskLoading(true)
+    setRiskError('')
+    setSlaRisks(null)
+    const activeTickets = active.slice(0, 60).map((ticket) => ({
+      ticketId: ticket.id,
+      priority: ticket.urgency,
+      status: ticket.status,
+      startedAt: ticket.slaStartedAt || ticket.createdAtRaw,
+      firstResponseAt: ticket.firstResponseAt,
+      responseDueAt: ticket.responseDueAt,
+      resolutionDueAt: ticket.resolutionDueAt,
+      technicianAssigned: Boolean(ticket.technicianId),
+      department: getAsset(ticket.assetId)[2],
+      equipmentType: getAsset(ticket.assetId)[4],
+    }))
+    const history = tickets.filter((ticket) => ['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status) && ticket.resolvedAt)
+      .slice(0, 250).map((ticket) => {
+        const started = new Date(ticket.slaStartedAt || ticket.createdAtRaw).getTime()
+        const resolved = new Date(ticket.resolvedAt).getTime()
+        const firstResponse = ticket.firstResponseAt ? new Date(ticket.firstResponseAt).getTime() : NaN
+        return {
+          priority: ticket.urgency,
+          department: getAsset(ticket.assetId)[2],
+          equipmentType: getAsset(ticket.assetId)[4],
+          responseMinutes: Number.isFinite(firstResponse) && Number.isFinite(started) ? Math.max(0, Math.round((firstResponse - started) / 60000)) : null,
+          resolutionMinutes: Number.isFinite(resolved) && Number.isFinite(started) ? Math.max(0, Math.round((resolved - started) / 60000)) : null,
+          metResponseSla: Boolean(ticket.firstResponseAt && ticket.responseDueAt && firstResponse <= new Date(ticket.responseDueAt).getTime()),
+          metResolutionSla: Boolean(ticket.resolutionDueAt && resolved <= new Date(ticket.resolutionDueAt).getTime()),
+        }
+      })
+    const { data, error } = await supabase.functions.invoke('ticket-sla-risk', { body: { activeTickets, history } })
+    setRiskLoading(false)
+    if (error) {
+      const response = error.context && typeof error.context.clone === 'function' ? await error.context.clone().json().catch(() => null) : null
+      setRiskError(response?.error || error.message || 'Impossible de calculer les risques SLA.')
+      return
+    }
+    if (data?.error) { setRiskError(data.error); return }
+    setSlaRisks(Array.isArray(data?.risks) ? data.risks.sort((a, b) => b.riskPercent - a.riskPercent) : [])
+  }
   return <section className="manager-overview">
     <section className="manager-task-action"><div><b>{'Planifier le travail de l\u2019\u00e9quipe'}</b><span>{'Attribuez une t\u00e2che de maintenance ou de v\u00e9rification \u00e0 un technicien.'}</span></div><button type="button" onClick={onOpenTasks}>{'Cr\u00e9er une t\u00e2che'}</button></section>
     <div className="manager-metrics">
@@ -1179,6 +1260,22 @@ function ManagerOverview({ tickets, technicians, onOpenTickets, onOpenTasks, isA
       <article><small>PRIORITÉ HAUTE</small><b>{urgent.length}</b><span>Incidents actifs prioritaires</span></article>
       <article className={overdue.length ? 'manager-metric-breached' : ''}><small>SLA DÉPASSÉS</small><b>{overdue.length}</b><span>{atRisk.length} à surveiller dans l’heure</span></article>
     </div>
+    <section className="card sla-predictor">
+      <div className="sla-predictor-heading"><div className="card-heading"><span className="heading-icon heading-icon-soft">✦</span><div><p className="eyebrow">PRÉVISION IA</p><h2>Risque de dépassement SLA</h2></div></div><button type="button" className="sla-predictor-button" onClick={() => void analyzeSlaRisk()} disabled={riskLoading || !active.length}>{riskLoading ? 'Analyse…' : slaRisks ? 'Actualiser l’analyse' : 'Analyser les risques'}</button></div>
+      <p className="sla-predictor-intro">Estimation basée sur les échéances, l’affectation et l’historique des incidents résolus. Les résultats aident le responsable à décider de la suite.</p>
+      {riskError && <p className="form-message" role="alert">{riskError}</p>}
+      {riskLoading && <p className="empty">Analyse des incidents et des résultats SLA historiques…</p>}
+      {!riskLoading && slaRisks && (slaRisks.length ? <div className="sla-prediction-list">{slaRisks.filter((risk) => risk.riskPercent >= 30).slice(0, 5).map((risk) => {
+        const ticket = active.find((item) => item.id === risk.ticketId)
+        if (!ticket) return null
+        const level = risk.riskPercent >= 70 ? 'high' : risk.riskPercent >= 45 ? 'medium' : 'low'
+        return <article className={`sla-prediction sla-prediction-${level}`} key={risk.ticketId}>
+          <div className="sla-prediction-ticket"><b>{ticket.id}</b><span>{getAsset(ticket.assetId)[1]} · {ticket.technicianId ? ticket.assignee || 'Technicien attribué' : 'Non attribué'}</span></div>
+          <span className="sla-prediction-score">{risk.riskPercent}%<small>risque</small></span>
+          <p>{risk.reason}</p><small className="sla-prediction-action">Action suggérée : {risk.recommendedAction}</small>
+        </article>
+      })}{!slaRisks.some((risk) => risk.riskPercent >= 30) && <p className="empty">Aucun incident ne présente actuellement un risque élevé selon cette estimation.</p>}</div> : <p className="empty">Aucun incident actif à analyser.</p>)}
+    </section>
     <div className="manager-overview-grid">
       <section className="card manager-workload"><div className="card-heading"><span className="heading-icon">◉</span><div><p className="eyebrow">RÉPARTITION DE LA CHARGE</p><h2>Incidents par technicien</h2></div></div>
         <div className="manager-workload-head"><span>ÉQUIPE</span><span>ACTIFS</span><span>RÉSOLUS</span></div>
@@ -1669,6 +1766,15 @@ function TicketAnalytics({ tickets }) {
   const formatDuration = (minutes) => minutes < 60 ? `${Math.round(minutes)} min` : minutes < 1440 ? `${Math.floor(minutes / 60)} h ${Math.round(minutes % 60)} min` : `${Math.floor(minutes / 1440)} j ${Math.floor(minutes % 1440 / 60)} h`
   const machineRows = assets.map(([id, name]) => ({ label: `${name} \u00b7 ${id}`, count: periodTickets.filter((ticket) => ticket.assetId === id).length })).sort((a, b) => b.count - a.count)
   const departmentRows = departments.map((department) => ({ label: department, count: periodTickets.filter((ticket) => getAsset(ticket.assetId)[2] === department).length })).sort((a, b) => b.count - a.count)
+  const technicianRows = [...new Set(periodTickets.filter((ticket) => ticket.technicianId && ticket.assignee).map((ticket) => ticket.technicianId))]
+    .map((technicianId) => {
+      const assigned = periodTickets.filter((ticket) => ticket.technicianId === technicianId)
+      return {
+        label: (assigned[0]?.assignee || 'Technicien').replace(/\btechnicisn\b/gi, 'technicien'),
+        count: assigned.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)).length,
+        resolved: assigned.filter((ticket) => ['R\u00e9solu', 'Cl\u00f4tur\u00e9'].includes(ticket.status)).length,
+      }
+    }).sort((a, b) => b.count - a.count || b.resolved - a.resolved)
   const volumeByWeek = Array.from({ length: 8 }, (_, index) => {
     const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (7 - index) * 7)
     start.setHours(0, 0, 0, 0)
@@ -1757,6 +1863,21 @@ function TicketAnalytics({ tickets }) {
       <article className="card stat-card">
         <div className="stat-card-heading"><span className="stat-card-icon stat-card-icon-warm">02</span><div><p className="eyebrow">SITES ET SERVICES</p><h2>{'Incidents par d\u00e9partement'}</h2></div></div>
         <div className="stat-rows">{renderRows(departmentRows)}</div>
+      </article>
+    </section>
+    <section className="ticket-analytics" aria-label="Charge des techniciens">
+      <article className="card stat-card">
+        <div className="stat-card-heading"><span className="stat-card-icon">03</span><div><p className="eyebrow">ÉQUIPE</p><h2>Résultats de l’équipe</h2></div></div>
+        {technicianRows.length ? <div className="stat-rows">{(() => {
+          const resolved = technicianRows.reduce((sum, row) => sum + row.resolved, 0)
+          const active = technicianRows.reduce((sum, row) => sum + row.count, 0)
+          return <div className="analytics-row">
+          <div className="analytics-row-main">
+            <div className="analytics-row-heading"><span>ÉQUIPE</span><b>{resolved}<small> résolu{resolved === 1 ? '' : 's'}</small></b></div>
+            <div className="analytics-track"><span style={{ width: `${(resolved / Math.max(1, resolved + active)) * 100}%` }} /></div>
+          </div>
+        </div>
+        })()}</div> : <p className="empty">Aucune intervention attribu\u00e9e sur cette p\u00e9riode.</p>}
       </article>
     </section>
     <p className="stats-footnote">Le volume et les répartitions utilisent la date de création; le délai médian utilise la date de résolution. Les tickets historiques sans date de résolution sont exclus du calcul.</p>

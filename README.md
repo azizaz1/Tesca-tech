@@ -105,6 +105,12 @@ To enable it on your Supabase project:
 
 The Groq key stays in Supabase and is never included in the web or Android app.
 
+## AI SLA risk predictor
+
+IT managers and admins can request an on-demand estimate of which active incidents are most likely to miss their SLA. The predictor compares current deadlines, elapsed time, priority, assignment, and anonymized outcomes from resolved tickets. It returns a short reason and suggested action for the highest-risk tickets. The estimate is advisory and is not a calibrated guarantee. It does not change ticket status or assignment.
+
+The Supabase project must have `GROQ_API_KEY` configured as an Edge Function secret. Deploy the authenticated function with `supabase functions deploy ticket-sla-risk`. The manager overview displays the **Analyser les risques** action; analysis runs only when requested. Ticket descriptions and reporter names are not sent to Groq.
+
 ## Available commands
 
 | Command | Description |

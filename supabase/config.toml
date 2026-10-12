@@ -6,3 +6,6 @@ verify_jwt = false
 
 [functions.technician-ai-assist]
 verify_jwt = true
+
+[functions.ticket-sla-risk]
+verify_jwt = true
