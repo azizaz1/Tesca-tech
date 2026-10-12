@@ -1038,6 +1038,9 @@ function InventoryCenter({ user, tickets }) {
   const [fromDate, setFromDate] = useState(() => { const date = new Date(); date.setDate(1); return inventoryDateString(date) })
   const [toDate, setToDate] = useState(() => inventoryDateString(new Date()))
   const [printReady, setPrintReady] = useState(false)
+  const [stockForecasts, setStockForecasts] = useState(null)
+  const [forecastLoading, setForecastLoading] = useState(false)
+  const [forecastError, setForecastError] = useState('')
 
   useEffect(() => {
     let active = true
@@ -1112,6 +1115,42 @@ function InventoryCenter({ user, tickets }) {
   })
   const stockAtDate = (id) => movements.filter((movement) => movement.item_id === id && (!toDate || inventoryDateString(movement.created_at) <= toDate)).reduce((sum, movement) => sum + movement.quantity_change, 0)
 
+  const analyzeStockForecast = async () => {
+    setForecastLoading(true)
+    setForecastError('')
+    setStockForecasts(null)
+    const now = Date.now()
+    const thirtyDaysAgo = now - 30 * 86400000
+    const ninetyDaysAgo = now - 90 * 86400000
+    const forecastItems = activeItems.map((item) => {
+      const usage = movements.filter((movement) => movement.item_id === item.id && movement.movement_type === 'usage')
+      const usageLast30 = usage.filter((movement) => new Date(movement.created_at).getTime() >= thirtyDaysAgo)
+        .reduce((sum, movement) => sum + Math.abs(Number(movement.quantity_change) || 0), 0)
+      const usagePrevious60 = usage.filter((movement) => {
+        const time = new Date(movement.created_at).getTime()
+        return time >= ninetyDaysAgo && time < thirtyDaysAgo
+      }).reduce((sum, movement) => sum + Math.abs(Number(movement.quantity_change) || 0), 0)
+      return {
+        itemId: item.id,
+        code: item.code,
+        name: item.name,
+        currentBalance: balanceByItem[item.id] || 0,
+        minStock: item.min_stock || 0,
+        usageLast30,
+        usagePrevious60,
+      }
+    })
+    const { data, error: invokeError } = await supabase.functions.invoke('inventory-stock-forecast', { body: { items: forecastItems } })
+    setForecastLoading(false)
+    if (invokeError) {
+      const response = invokeError.context && typeof invokeError.context.clone === 'function' ? await invokeError.context.clone().json().catch(() => null) : null
+      setForecastError(response?.error || invokeError.message || 'Impossible de calculer les prévisions de stock.')
+      return
+    }
+    if (data?.error) { setForecastError(data.error); return }
+    setStockForecasts(Array.isArray(data?.forecasts) ? data.forecasts.sort((a, b) => (a.daysToMinimum ?? Infinity) - (b.daysToMinimum ?? Infinity)) : [])
+  }
+
   const addInventoryItem = async (event) => {
     event.preventDefault()
     setSaving(true); setError(''); setMessage('')
@@ -1171,7 +1210,23 @@ function InventoryCenter({ user, tickets }) {
     <section className="card inventory-overview">
       <div className="card-heading"><span className="heading-icon heading-icon-soft">▤</span><div><p className="eyebrow">CONSOMMABLES INFORMATIQUES</p><h2>Stock et mouvements</h2></div><button type="button" className="inventory-pdf-button" onClick={() => setPrintReady(true)} disabled={loading || printReady}>{printReady ? 'Preparing...' : 'Générer PDF'}</button></div>
       <p className="card-intro">Suivez les arrivages, les consommations et les niveaux disponibles.</p>
+      <div className="inventory-forecast-actions"><button type="button" className="inventory-forecast-button" onClick={() => void analyzeStockForecast()} disabled={loading || forecastLoading || !activeItems.length}>{forecastLoading ? 'Analyse…' : stockForecasts ? 'Actualiser les prévisions' : 'Prévisions IA'}</button><span>Estimez les risques de rupture à partir des consommations récentes.</span></div>
       {error && <p className="form-message" role="alert">{error}</p>}{message && <p className="task-success" role="status">{message}</p>}
+      {forecastError && <p className="form-message" role="alert">{forecastError}</p>}
+      {forecastLoading && <p className="empty">Analyse de l’historique de consommation…</p>}
+      {!forecastLoading && stockForecasts && <section className="inventory-ai-forecast" aria-label="Prévisions IA du stock">
+        <div className="inventory-ai-forecast-heading"><div><p className="eyebrow">PRÉVISION SUR 30 JOURS</p><h3>Consommation et réapprovisionnement</h3></div><p>Estimation basée sur les mouvements des 90 derniers jours. Aucune commande n’est créée automatiquement.</p></div>
+        {stockForecasts.length ? <div className="inventory-ai-forecast-list">{stockForecasts.map((forecast) => {
+          const lowSoon = forecast.daysToMinimum !== null && forecast.daysToMinimum <= 30
+          const trendLabel = { increasing: 'En hausse', stable: 'Stable', decreasing: 'En baisse', insufficient_data: 'Historique insuffisant' }[forecast.trend] || 'À analyser'
+          return <article className={`inventory-ai-forecast-row${lowSoon ? ' inventory-ai-forecast-low' : ''}`} key={forecast.itemId}>
+            <div className="inventory-ai-forecast-item"><b>{forecast.code} · {forecast.name}</b><span>Stock actuel : {forecast.currentBalance} · Seuil : {forecast.minStock}</span></div>
+            <div className="inventory-ai-forecast-metrics"><span><b>{forecast.daysToMinimum === null ? '—' : forecast.daysToMinimum === 0 ? 'Au seuil' : `${forecast.daysToMinimum} j`}</b><small>avant seuil</small></span><span><b>{forecast.daysToEmpty === null ? '—' : forecast.daysToEmpty === 0 ? 'Épuisé' : `${forecast.daysToEmpty} j`}</b><small>avant rupture</small></span><span><b>{forecast.suggestedOrder === null ? '—' : forecast.suggestedOrder}</b><small>à commander*</small></span></div>
+            <p>{forecast.reason}</p><small className="inventory-ai-forecast-action">{forecast.action} · Tendance : {trendLabel}</small>
+          </article>
+        })}</div> : <p className="empty">Aucun consommable actif à analyser.</p>}
+        <small className="inventory-ai-forecast-note">* Quantité estimée pour remonter au seuil minimum et couvrir environ 30 jours au rythme calculé. À ajuster selon les délais de livraison fournisseur.</small>
+      </section>}
       {loading ? <p className="empty">Chargement du stock…</p> : activeItems.length ? <div className="inventory-stock-grid">{activeItems.map((item) => {
         const balance = balanceByItem[item.id] || 0
         const low = balance <= item.min_stock
