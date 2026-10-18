@@ -1556,6 +1556,8 @@ function FacilityMap({ tickets, user }) {
   const positionsRef = useRef(positions)
   const [mapPath, setMapPath] = useState('')
   const [mapImageUrl, setMapImageUrl] = useState('')
+  const [facilityMaps, setFacilityMaps] = useState([])
+  const [activeMapId, setActiveMapId] = useState('')
   const [mapBusy, setMapBusy] = useState(false)
   const [mapError, setMapError] = useState('')
   const [is3d, setIs3d] = useState(false)
@@ -1572,19 +1574,19 @@ function FacilityMap({ tickets, user }) {
   useEffect(() => {
     let active = true
     const refreshSharedMap = async () => {
-      const [settingsResult, positionsResult, assetsResult] = await Promise.all([
-        supabase.from('facility_map_settings').select('map_path').eq('id', true).maybeSingle(),
-        supabase.from('facility_map_positions').select('asset_id, x, y'),
+      const [mapsResult, assetsResult] = await Promise.all([
+        supabase.from('facility_maps').select('id, name, map_path').order('created_at'),
         supabase.from('assets').select('id, name, kind, department, location').order('id'),
       ])
       if (!active) return
-      if (!assetsResult.error) {
-        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
-        setSelectedAssetId((current) => current && assetsResult.data.some((asset) => asset.id === current) ? current : null)
-      }
-      if (settingsResult.error) setMapError(settingsResult.error.message)
+      if (mapsResult.error) setMapError(mapsResult.error.message)
       else {
-        const path = settingsResult.data?.map_path || ''
+        const maps = mapsResult.data || []
+        setFacilityMaps(maps)
+        const currentId = maps.some((map) => map.id === activeMapId) ? activeMapId : maps[0]?.id || ''
+        setActiveMapId(currentId)
+        const currentMap = maps.find((map) => map.id === currentId)
+        const path = currentMap?.map_path || ''
         setMapPath(path)
         if (path) {
           const { data, error } = await supabase.storage.from('facility-maps').createSignedUrl(path, 3600)
@@ -1593,24 +1595,26 @@ function FacilityMap({ tickets, user }) {
           else setMapImageUrl(data?.signedUrl || '')
         } else setMapImageUrl('')
       }
-      if (positionsResult.error) setMapError(positionsResult.error.message)
+      if (!assetsResult.error) {
+        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+        setSelectedAssetId((current) => current && assetsResult.data.some((asset) => asset.id === current) ? current : null)
+      }
+      const { data: positionRows, error: positionsError } = activeMapId ? await supabase.from('facility_map_positions').select('asset_id, x, y').eq('map_id', activeMapId) : { data: [], error: null }
+      if (positionsError) setMapError(positionsError.message)
       else {
-        const shared = Object.fromEntries((positionsResult.data || []).map((position) => [position.asset_id, { x: Number(position.x), y: Number(position.y) }]))
-        setPositions((current) => {
-          const next = { ...current, ...shared }
-          positionsRef.current = next
-          return next
-        })
+        const shared = Object.fromEntries((positionRows || []).map((position) => [position.asset_id, { x: Number(position.x), y: Number(position.y) }]))
+        positionsRef.current = shared
+        setPositions(shared)
       }
     }
     void refreshSharedMap()
     const channel = supabase.channel(`facility-map-${user.id}`)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'facility_map_settings' }, () => void refreshSharedMap())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'facility_maps' }, () => void refreshSharedMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'facility_map_positions' }, () => void refreshSharedMap())
       .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, () => void refreshSharedMap())
       .subscribe()
     return () => { active = false; void supabase.removeChannel(channel) }
-  }, [user.id])
+  }, [user.id, activeMapId])
 
   const getZone = (location) => {
     const text = location.toLocaleLowerCase('fr')
@@ -1644,7 +1648,7 @@ function FacilityMap({ tickets, user }) {
   const saveDraggedPosition = async (id) => {
     if (!canEdit || !id || !positionsRef.current[id]) return
     const { x, y } = positionsRef.current[id]
-    const { error } = await supabase.from('facility_map_positions').upsert({ asset_id: id, x, y, updated_by: user.id, updated_at: new Date().toISOString() }, { onConflict: 'asset_id' })
+    const { error } = await supabase.from('facility_map_positions').upsert({ map_id: activeMapId, asset_id: id, x, y, updated_by: user.id, updated_at: new Date().toISOString() }, { onConflict: 'map_id,asset_id' })
     if (error) setMapError(error.message)
   }
   const addAsset = async (event) => {
@@ -1687,7 +1691,7 @@ function FacilityMap({ tickets, user }) {
       setMapError(message)
       setAssetNotice({ type: 'error', title: 'Suppression impossible', text: message })
     } else {
-      await supabase.from('facility_map_positions').delete().eq('asset_id', asset[0])
+      await supabase.from('facility_map_positions').delete().eq('map_id', activeMapId).eq('asset_id', asset[0])
       setMapAssets((current) => current.filter((item) => item[0] !== asset[0]))
       setSelectedAssetId(null)
       setPositions((current) => {
@@ -1752,7 +1756,7 @@ function FacilityMap({ tickets, user }) {
     try {
       const { error: uploadError } = await supabase.storage.from('facility-maps').upload(newPath, file, { contentType: file.type, upsert: false })
       if (uploadError) throw uploadError
-      const { error: settingsError } = await supabase.from('facility_map_settings').update({ map_path: newPath, updated_by: user.id, updated_at: new Date().toISOString() }).eq('id', true)
+      const { error: settingsError } = await supabase.from('facility_maps').update({ map_path: newPath }).eq('id', activeMapId)
       if (settingsError) {
         await supabase.storage.from('facility-maps').remove([newPath])
         throw settingsError
@@ -1761,6 +1765,7 @@ function FacilityMap({ tickets, user }) {
       if (urlError) throw urlError
       setMapPath(newPath)
       setMapImageUrl(data.signedUrl)
+      setFacilityMaps((maps) => maps.map((map) => map.id === activeMapId ? { ...map, map_path: newPath } : map))
       if (mapPath && mapPath !== newPath) void supabase.storage.from('facility-maps').remove([mapPath])
     } catch (error) {
       setMapError(error?.message || "Impossible d importer le plan du site.")
@@ -1769,23 +1774,32 @@ function FacilityMap({ tickets, user }) {
       input.value = ''
     }
   }
+  const addNamedMap = async () => {
+    const name = window.prompt('Nom du plan (ex. Rez-de-chaussée, Entrepôt)')?.trim()
+    if (!name) return
+    const { data, error } = await supabase.from('facility_maps').insert({ name, created_by: user.id }).select('id, name, map_path').single()
+    if (error) setMapError(error.message)
+    else { setFacilityMaps((maps) => [...maps, data]); setActiveMapId(data.id); setPositions({}); positionsRef.current = {} }
+  }
   return <section className="facility-map card">
     <div className="facility-map-heading"><div><p className="eyebrow">PLAN INTERACTIF</p><h2>Carte du site</h2><p>{canEdit ? 'Importez un plan, puis deplacez les reperes numerotes.' : 'Selectionnez un numero pour afficher l equipement correspondant.'}</p></div><div className="facility-map-actions">
-      {canEdit && <label className="map-upload-control">{mapBusy ? 'Import en cours...' : mapImageUrl ? 'Changer le plan' : 'Importer un plan'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={(event) => void uploadMap(event)} disabled={mapBusy} /></label>}
+      {canEdit && <button type="button" className="add-map-asset" onClick={() => void addNamedMap()}>+ Ajouter un plan</button>}
+      {canEdit && activeMapId && <label className="map-upload-control">{mapBusy ? 'Import en cours...' : mapImageUrl ? 'Changer le plan' : 'Importer un plan'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={(event) => void uploadMap(event)} disabled={mapBusy} /></label>}
       {canEdit && <button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un équipement</button>}
       <div className="map-zoom-controls" aria-label="Zoom"><button type="button" onClick={() => setMapZoom((zoom) => Math.max(0.75, +(zoom - 0.25).toFixed(2)))} aria-label="Zoom arriere" disabled={mapZoom <= 0.75}>-</button><span>{Math.round(mapZoom * 100)}%</span><button type="button" onClick={() => setMapZoom((zoom) => Math.min(2, +(zoom + 0.25).toFixed(2)))} aria-label="Zoom avant" disabled={mapZoom >= 2}>+</button><button type="button" onClick={() => setMapZoom(1)} aria-label="Reinitialiser le zoom">Reset</button></div>
       <button type="button" className={is3d ? 'active' : ''} onClick={() => setIs3d((value) => !value)}>{is3d ? 'Vue 2D' : 'Vue 3D'}</button>
     </div></div>
+    <div className="facility-map-tabs" role="tablist" aria-label="Plans du site">{facilityMaps.map((map) => <button type="button" role="tab" aria-selected={activeMapId === map.id} className={activeMapId === map.id ? 'active' : ''} key={map.id} onClick={() => { setActiveMapId(map.id); setPositions({}); positionsRef.current = {}; setMapZoom(1) }}>{map.name}</button>)}{!facilityMaps.length && <span>Aucun plan. Un responsable peut en ajouter un.</span>}</div>
     {mapError && <p className="map-upload-error" role="alert">{mapError}</p>}
     {addingAsset && canEdit && <form className="map-asset-form" onSubmit={(event) => void addAsset(event)}><input required maxLength={80} placeholder="Référence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required maxLength={160} placeholder="Nom de l’équipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><input required maxLength={80} placeholder="Type (PC fixe, imprimante…)" value={newAsset.kind} onChange={(event) => setNewAsset({ ...newAsset, kind: event.target.value })} /><input required maxLength={120} placeholder="Service" value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })} /><input required maxLength={160} placeholder="Bâtiment, étage, bureau" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit" disabled={assetBusy}>{assetBusy ? 'Ajout…' : 'Ajouter'}</button></form>}
-    <div className="facility-plan">
+    {activeMapId ? <div className="facility-plan">
       <div className={`facility-plan-image ${is3d ? 'map-view-3d' : ''}`} style={{ '--map-zoom': mapZoom }} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerEnd} onPointerCancel={handleMapPointerEnd}>
         <img src={mapImageUrl || officeFloorplan} alt="Plan du site" />
         {mapAssets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)); return <button type="button" onPointerDown={(event) => { if (!canEdit || mapPointers.current.size > 1) return; if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); draggedAsset.current = { id: asset[0], pointerId: event.pointerId } }} className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} - ${asset[3]}`} aria-label={`Equipement ${index + 1}: ${asset[1]} (${asset[0]})`}>{index + 1}</button> })}
       </div>
       <div className="facility-map-asset-index" aria-label="Numeros des equipements">{mapAssets.map((asset, index) => <button type="button" className={selectedAssetId === asset[0] ? 'active' : ''} key={asset[0]} onClick={() => setSelectedAssetId(asset[0])}><b>{index + 1}</b><span>{asset[0]} · {asset[1]}</span></button>)}</div>
       {selectedAsset && <section className="facility-map-selection" aria-live="polite"><div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span>Equipement selectionne</span></div><p className="map-location-edit">Emplacement : {selectedAsset[3]}</p>{canEdit && <button type="button" className="delete-map-asset" onClick={() => void deleteAsset(selectedAsset)} disabled={assetBusy}>Supprimer</button>}</section>}
-    </div>
+    </div> : <p className="empty">Aucun plan disponible.</p>}
     {assetNotice && <MapAssetResultDialog notice={assetNotice} onClose={() => setAssetNotice(null)} />}
   </section>
 }
