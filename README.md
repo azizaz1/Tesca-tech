@@ -49,7 +49,7 @@ To enable this feature on an existing database, run `supabase/migrations/019_tec
 
 ## Technician consumable inventory
 
-Technicians, IT managers, and admins can maintain consumables, record arrivals and usage, review stock balances and history, and generate a print-ready stock report that can be saved as a PDF. Apply `supabase/migrations/025_technician_inventory.sql` after migration 024. The migration creates the inventory catalog and movement ledger, role-based access policies, and a stock-safe movement RPC.
+Technicians, IT managers, and admins can maintain consumables, record arrivals and usage, review stock balances and history, and generate a print-ready stock report that can be saved as a PDF. From a repair ticket, technicians can record each part used; the stock-safe movement RPC checks availability, deducts the quantity, and links the movement to both the ticket and its equipment. Ticket links also appear in the stock movement history and PDF report. Apply `supabase/migrations/025_technician_inventory.sql` after migration 024. The migration creates the inventory catalog and movement ledger, role-based access policies, and the stock-safe movement RPC.
 
 The stock page also includes on-demand AI forecasts based on the last 90 days of usage. The forecast estimates days until the minimum level and stockout, and suggests an approximate order quantity to restore the minimum plus 30 days of coverage. It requires the `GROQ_API_KEY` Edge Function secret and the authenticated function deployed with `supabase functions deploy inventory-stock-forecast`. Estimates are advisory; the app does not create purchase orders automatically.
 
@@ -62,6 +62,8 @@ Technicians, IT managers, and admins can publish a reusable solution from a reso
 IT managers and admins can upload a facility floor plan from desktop or mobile, then drag the numbered equipment markers into position. The uploaded map and marker positions are shared with authenticated users across devices. Apply `supabase/migrations/020_shared_facility_map.sql` after migration 019 to create the private map storage bucket and shared map settings.
 
 IT managers and admins can remove an unused asset from its selected item card on the map. Apply `supabase/migrations/024_manager_delete_assets.sql` to enable this; assets already referenced by incidents cannot be deleted.
+
+The map shows each asset as **Operational**, **Out of service**, **Under maintenance**, or **Not checked**, with matching colors in the map pins and equipment list. Technicians, IT managers, and admins can update an asset status; an open ticket is shown separately and does not automatically mark the asset out of service. Apply `supabase/migrations/028_equipment_operational_status.sql` after migration 027 to store shared status and its last update time.
 
 ## Incident sync and Android push notifications
 

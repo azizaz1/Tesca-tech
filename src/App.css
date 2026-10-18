@@ -501,6 +501,8 @@
 @media(max-width:680px){.admin-page-tabs{grid-template-columns:repeat(2,minmax(0,1fr))}.facility-map-asset-index{grid-template-columns:repeat(2,minmax(0,1fr));max-height:160px}.map-upload-control{min-height:35px;font-size:9px}}
 
 .technician-page-tabs .task-tab-badge{display:inline-grid;min-width:19px;height:19px;place-items:center;margin-left:6px;border-radius:10px;background:#c8473d;padding:0 5px;color:#fff;font-size:9px;font-weight:800;line-height:1}
+.technician-page-tabs .intervention-tab-badge{display:inline-grid;min-width:19px;height:19px;place-items:center;margin-left:6px;border-radius:10px;background:#c8473d;padding:0 5px;color:#fff;font-size:9px;font-weight:800;line-height:1}
+
 
 
 /* Per-user night mode */
@@ -641,3 +643,67 @@ body.theme-dark .inventory-stock-card,body.theme-dark .inventory-table th,body.t
 .inventory-ai-forecast{margin:0 0 16px;border:1px solid #e6eae5;border-radius:12px;background:#fbfcfa;padding:15px}.inventory-ai-forecast-heading{display:flex;align-items:end;justify-content:space-between;gap:16px;margin-bottom:11px}.inventory-ai-forecast-heading .eyebrow{margin-bottom:4px;color:#8c9a91;font-size:8px}.inventory-ai-forecast-heading h3{color:#344448;font-size:14px}.inventory-ai-forecast-heading>p{max-width:330px;color:#849087;font-size:8px;line-height:1.5;text-align:right}.inventory-ai-forecast-list{display:grid;gap:8px}.inventory-ai-forecast-row{display:grid;grid-template-columns:minmax(130px,1fr) auto;gap:7px 14px;border:1px solid #e7ebe6;border-radius:9px;background:#fff;padding:11px}.inventory-ai-forecast-low{border-color:#efd9c9;background:#fffaf6}.inventory-ai-forecast-item{display:grid;align-content:center;gap:4px;min-width:0}.inventory-ai-forecast-item b{overflow:hidden;color:#35464a;font-size:10px;text-overflow:ellipsis;white-space:nowrap}.inventory-ai-forecast-item span{color:#7e8982;font-size:8px}.inventory-ai-forecast-metrics{display:flex;align-items:center;gap:16px}.inventory-ai-forecast-metrics>span{display:grid;gap:3px;min-width:47px;text-align:right}.inventory-ai-forecast-metrics b{color:#3d5e4b;font-size:13px}.inventory-ai-forecast-low .inventory-ai-forecast-metrics b{color:#a45b38}.inventory-ai-forecast-metrics small{color:#87918b;font-size:7px}.inventory-ai-forecast-row>p,.inventory-ai-forecast-action{grid-column:1/-1;margin:0;color:#59665f;font-size:9px;line-height:1.45}.inventory-ai-forecast-action{color:#748078;font-size:8px}.inventory-ai-forecast-note{display:block;margin-top:10px;color:#89938d;font-size:8px;line-height:1.5}
 @media(max-width:680px){.inventory-ai-forecast{padding:11px}.inventory-ai-forecast-heading{align-items:flex-start;flex-direction:column;gap:5px}.inventory-ai-forecast-heading>p{text-align:left}.inventory-ai-forecast-row{grid-template-columns:1fr;gap:9px}.inventory-ai-forecast-metrics{justify-content:space-between;gap:8px}.inventory-ai-forecast-metrics>span{text-align:left}.inventory-ai-forecast-row>p,.inventory-ai-forecast-action{grid-column:auto}}
 .facility-map-tabs{display:flex;gap:7px;overflow:auto;margin:0 0 12px;padding:3px 1px 7px}.facility-map-tabs button{flex:0 0 auto;border:1px solid #dfe7de;border-radius:9px;background:#fff;padding:8px 13px;color:#52665a;font-size:11px;font-weight:700;cursor:pointer}.facility-map-tabs button.active{border-color:#345b4a;background:#345b4a;color:#fff}.facility-map-tabs span{color:#718078;font-size:11px}
+
+
+/* Technician ticket resolution confirmation uses the shared SuccessDialog. */
+.ticket-parts{margin:14px 0;border:1px solid #e3e9e3;border-radius:12px;background:#f8faf7;padding:14px}
+.ticket-parts-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:10px}
+.ticket-parts-heading .eyebrow{margin-bottom:4px;color:#789083;font-size:8px}
+.ticket-parts-heading h3{color:#35464a;font-size:13px}
+.ticket-parts-heading p:not(.eyebrow){margin-top:4px;color:#85918a;font-size:9px;line-height:1.45}
+.ticket-parts-heading>span{display:grid;flex:0 0 27px;height:27px;place-items:center;border-radius:50%;background:#e8f0e9;color:#4c7559;font-size:10px;font-weight:800}
+.ticket-parts-form{display:grid;grid-template-columns:minmax(0,1fr) 100px;align-items:end;gap:8px}
+.ticket-parts-form .task-field{margin:0;color:#58685e;font-size:9px}
+.ticket-parts-form input,.ticket-parts-form select{min-width:0;width:100%;height:38px;margin-top:5px;border:1px solid #dfe6df;border-radius:8px;background:#fff;padding:0 9px;color:#35464a;font:inherit;font-size:10px}
+.ticket-parts-note{grid-column:1/-1}
+.ticket-parts-form button{grid-column:1/-1;min-height:38px;border:0;border-radius:8px;background:#315f49;padding:0 12px;color:#fff;font-size:10px;font-weight:750}
+.ticket-parts-form button:disabled{opacity:.55;cursor:not-allowed}
+.ticket-parts-history{display:grid;gap:6px;margin-top:11px}
+.ticket-parts-history article{display:flex;align-items:center;justify-content:space-between;gap:10px;border-top:1px solid #e7ece6;padding:8px 2px 2px}
+.ticket-parts-history article>div{display:grid;min-width:0;gap:3px}
+.ticket-parts-history b{overflow:hidden;color:#40514b;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.ticket-parts-history small{color:#89948d;font-size:8px;line-height:1.4}
+.ticket-parts-history strong{flex:none;color:#a65347;font-size:11px}
+.ticket-parts-success{margin:8px 0 0;color:#4f845d;font-size:9px}
+body.theme-dark .ticket-parts{border-color:#303c44;background:#202b32}
+body.theme-dark .ticket-parts-heading h3,body.theme-dark .ticket-parts-history b{color:#e4eaec}
+body.theme-dark .ticket-parts-heading .eyebrow{color:#9db8a4}
+body.theme-dark .ticket-parts-heading p:not(.eyebrow),body.theme-dark .ticket-parts-form .task-field,body.theme-dark .ticket-parts-history small{color:#a2afb4}
+body.theme-dark .ticket-parts-heading>span{background:#293a31;color:#a8d3b0}
+body.theme-dark .ticket-parts-form input,body.theme-dark .ticket-parts-form select{border-color:#3a474f;background:#151e24;color:#e1e8ea}
+body.theme-dark .ticket-parts-history article{border-color:#303c44}
+body.theme-dark .ticket-parts-success{color:#9bd2a8}
+@media(max-width:680px){.ticket-parts{padding:12px}.ticket-parts-form{grid-template-columns:minmax(0,1fr) 84px}.ticket-parts-form input,.ticket-parts-form select{font-size:9px}}
+
+.facility-map-status-filters{display:flex;gap:6px;overflow:auto;margin:12px 0 4px;padding:2px 1px 6px;scrollbar-width:thin}
+.facility-map-status-filters button{display:flex;flex:none;align-items:center;gap:6px;min-height:32px;border:1px solid #e2e8e2;border-radius:18px;background:#fff;padding:0 10px;color:#65736a;font-size:9px;font-weight:700;white-space:nowrap}
+.facility-map-status-filters button>span{display:grid;min-width:18px;height:18px;place-items:center;border-radius:10px;background:#edf1ed;color:#617166;font-size:8px}
+.facility-map-status-filters button.active{border-color:#395c4b;background:#edf4ee;color:#315740}
+.facility-map-status-filters button>i,.asset-status-dot{display:inline-block;flex:0 0 8px;width:8px;height:8px;border-radius:50%;background:#89939a}
+.facility-map-status-filters button.status-filter-operational>i,.asset-status-dot.status-operational{background:#258451}
+.facility-map-status-filters button.status-filter-out_of_service>i,.asset-status-dot.status-out_of_service{background:#c4493a}
+.facility-map-status-filters button.status-filter-maintenance>i,.asset-status-dot.status-maintenance{background:#c3841e}
+.facility-map-status-filters button.status-filter-unknown>i,.asset-status-dot.status-unknown{background:#89939a}
+.facility-map-status-note{margin:0 0 10px;color:#89938c;font-size:8px;line-height:1.4}
+.facility-plan-pin.status-operational{background:#258451}
+.facility-plan-pin.status-out_of_service{background:#c4493a}
+.facility-plan-pin.status-maintenance{background:#c3841e}
+.facility-plan-pin.status-unknown{background:#89939a}
+.facility-map-asset-index button .asset-status-dot{flex-basis:7px;width:7px;height:7px}
+.asset-status-badge{display:flex;flex:none;align-items:center;gap:6px;border:1px solid #e5eae5;border-radius:20px;background:#f4f7f4;padding:7px 9px;color:#53635a;font-size:8px;font-weight:750;white-space:nowrap}
+.asset-status-badge.status-operational{border-color:#cfe5d5;background:#edf7ef;color:#287447}
+.asset-status-badge.status-out_of_service{border-color:#f0d1ca;background:#fff1ee;color:#b54135}
+.asset-status-badge.status-maintenance{border-color:#f0dfb9;background:#fff8e9;color:#976918}
+.asset-status-badge.status-unknown{border-color:#e1e5e7;background:#f2f4f5;color:#67737a}
+.asset-status-updated{margin-top:7px;color:#89948d;font-size:8px}
+.asset-status-control{display:grid;gap:5px;margin-top:11px;color:#52625a;font-size:9px;font-weight:700}
+.asset-status-control select{width:100%;height:37px;border:1px solid #dfe6df;border-radius:8px;background:#fff;padding:0 10px;color:#40514b;font:inherit;font-size:10px}
+.asset-status-success{margin-top:7px;color:#4d815b;font-size:8px}
+body.theme-dark .facility-map-status-filters button{border-color:#3a474f;background:#202b32;color:#c2ccce}
+body.theme-dark .facility-map-status-filters button.active{border-color:#50705d;background:#25352d;color:#d7eadb}
+body.theme-dark .facility-map-status-filters button>span{background:#303d43;color:#d1dadd}
+body.theme-dark .facility-map-status-note,body.theme-dark .asset-status-updated{color:#a2afb4}
+body.theme-dark .asset-status-badge.status-unknown{border-color:#3a474f;background:#2b363c;color:#c0c9cc}
+body.theme-dark .asset-status-control{color:#b5c0c3}
+body.theme-dark .asset-status-control select{border-color:#3a474f;background:#151e24;color:#e1e8ea}
+@media(max-width:680px){.facility-map-status-filters{margin-right:-2px;margin-left:-2px}.facility-map-status-filters button{min-height:34px;padding:0 9px}.asset-status-badge{padding:6px 7px;font-size:7px}}

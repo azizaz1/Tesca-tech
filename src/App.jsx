@@ -357,13 +357,15 @@ export default function App() {
       const row = payload.new
       let notification
       if (payload.eventType === 'INSERT' && user.role !== 'employee' && row?.reference) {
-        notification = { title: 'Nouvel incident', message: `Une nouvelle demande ${row.reference} a été signalée.` }
-      } else if (payload.eventType === 'UPDATE' && user.role === 'employee' && row?.reporter_id === user.id && payload.old?.status !== row.status) {
+        notification = { id: `ticket-new-${row.id}`, title: 'Nouvel incident', message: `Une nouvelle demande ${row.reference} a été signalée.` }
+      } else if (payload.eventType === 'UPDATE' && user.role === 'employee' && row?.reporter_id === user.id && row.status === 'resolved') {
+        notification = { id: `ticket-resolved-${row.id}`, title: 'Problème résolu', message: `Le technicien a résolu votre demande ${row.reference}.` }
+      } else if (payload.eventType === 'UPDATE' && user.role === 'employee' && row?.reporter_id === user.id && payload.old?.status && payload.old.status !== row.status) {
         const status = statusLabels[row.status] || row.status
-        notification = { title: 'Statut mis à jour', message: `Votre demande ${row.reference} est maintenant : ${status}.` }
+        notification = { id: `ticket-status-${row.id}-${row.status}`, title: 'Statut mis à jour', message: `Votre demande ${row.reference} est maintenant : ${status}.` }
       }
       if (notification) {
-        setNotifications((current) => [{ ...notification, id: `${Date.now()}-${Math.random()}`, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 40))
+        setNotifications((current) => current.some((item) => item.id === notification.id) ? current : [{ ...notification, createdAt: new Date().toISOString(), read: false }, ...current].slice(0, 40))
       }
       void refresh()
     }).subscribe()
@@ -503,7 +505,10 @@ function PushRegistration({ userId }) {
 }
 
 function Employee({ user, tickets, setTickets, onOpenChat }) {
-  const [assetId, setAssetId] = useState(assets[0][0])
+  const [availableAssets, setAvailableAssets] = useState([])
+  const [assetsLoading, setAssetsLoading] = useState(true)
+  const [assetsError, setAssetsError] = useState('')
+  const [assetId, setAssetId] = useState('')
   const [issue, setIssue] = useState('')
   const [urgency, setUrgency] = useState('Normale')
   const [files, setFiles] = useState([])
@@ -517,6 +522,27 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   const [voiceError, setVoiceError] = useState('')
   const [ticketQuery, setTicketQuery] = useState('')
   const [ticketStatus, setTicketStatus] = useState('Tous')
+  const getEmployeeAsset = (id) => availableAssets.find((asset) => asset[0] === id) || assets.find((asset) => asset[0] === id) || [id, id, '', '', '']
+  useEffect(() => {
+    let active = true
+    const loadAssets = async () => {
+      const { data, error } = await supabase.from('assets').select('id, name, department, location, kind').order('id')
+      if (!active) return
+      if (error) setAssetsError(error.message)
+      else {
+        const rows = (data || []).map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind])
+        setAvailableAssets(rows)
+        setAssetsError('')
+        setAssetId((current) => rows.some((asset) => asset[0] === current) ? current : rows[0]?.[0] || '')
+      }
+      setAssetsLoading(false)
+    }
+    void loadAssets()
+    const channel = supabase.channel(`employee-assets-${user.id}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'assets' }, () => void loadAssets())
+      .subscribe()
+    return () => { active = false; void supabase.removeChannel(channel) }
+  }, [user.id])
   const dictateIssue = async () => {
     setVoiceError('')
     setVoiceBusy(true)
@@ -542,7 +568,7 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
           recognition.start()
         })
       }
-      if (transcript.trim()) setIssue((current) => `${current.trim()}${current.trim() ? ' ' : ''}${transcript.trim()}`.slice(0, 4000))
+      if (transcript.trim()) setIssue((current) => `${current.trim()}${current.trim() ? ' ' : ''}${transcript.trim()}`.slice(0, 2000))
     } catch (error) {
       console.warn('Voice dictation failed:', error)
       setVoiceError(error.message || 'Impossible de démarrer la dictée vocale.')
@@ -552,12 +578,17 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   }
   const submit = async (event) => {
     event.preventDefault()
-    if (!issue.trim()) return
+    if (!assetId) { setSubmitError('Aucun equipement disponible pour cette demande.'); return }
+    const cleanedIssue = issue.trim()
+    if (cleanedIssue.length < 5 || cleanedIssue.length > 2000) {
+      setSubmitError('La description doit contenir entre 5 et 2000 caracteres.')
+      return
+    }
     setSubmitError('')
     const { data, error } = await supabase.from('tickets').insert({
       asset_id: assetId,
       reporter_id: user.id,
-      issue: issue.trim(),
+      issue: cleanedIssue,
       priority: urgency === 'Haute' ? 'high' : 'normal',
       status: 'open',
     }).select().single()
@@ -609,7 +640,7 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
   const normalizedQuery = ticketQuery.trim().toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
   const visibleTickets = mine.filter((ticket) => {
     const matchesStatus = ticketStatus === 'Tous' || ticket.status === ticketStatus
-    const searchable = [ticket.id, ticket.assetId, getAsset(ticket.assetId)[1], ticket.issue, ticket.status]
+    const searchable = [ticket.id, ticket.assetId, getEmployeeAsset(ticket.assetId)[1], ticket.issue, ticket.status]
       .join(' ').toLocaleLowerCase('fr').normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     return matchesStatus && (!normalizedQuery || searchable.includes(normalizedQuery))
   })
@@ -620,9 +651,11 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
       <form className="card form-card" onSubmit={submit}>
         <div className="card-heading"><span className="heading-icon">＋</span><div><p className="eyebrow">NOUVELLE DEMANDE</p><h2>Signaler un problème</h2></div></div>
         {submitError && <p className="form-message" role="alert">{submitError}</p>}
-        <label className="field">Équipement concerné<select value={assetId} onChange={(event) => setAssetId(event.target.value)}>{assets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} — {asset[1]}</option>)}</select></label>
-        <div className="preview"><span className="preview-icon">▣</span><div><b>{getAsset(assetId)[1]}</b><small>{getAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
-        <label className="field">Décrivez le problème<textarea required maxLength={4000} value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /></label>
+        <label className="field">Equipement concerne<select required value={assetId} onChange={(event) => setAssetId(event.target.value)} disabled={assetsLoading || !!assetsError || !availableAssets.length}>{assetsLoading && <option value="">Chargement des equipements...</option>}{!assetsLoading && !availableAssets.length && <option value="">Aucun equipement disponible</option>}{availableAssets.map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} - {asset[1]}</option>)}</select></label>
+        {assetsError && <p className="form-message" role="alert">Impossible de charger la liste des equipements : {assetsError}</p>}
+        {!assetsLoading && !assetsError && !availableAssets.length && <p className="form-message" role="alert">Aucun equipement disponible. Demandez a un responsable IT d'en ajouter un.</p>}
+        <div className="preview"><span className="preview-icon">▣</span><div><b>{getEmployeeAsset(assetId)[1]}</b><small>{getEmployeeAsset(assetId)[3]}</small></div><span className="preview-code">{assetId}</span></div>
+        <label className="field">Décrivez le problème<textarea required minLength={5} maxLength={2000} value={issue} onChange={(event) => setIssue(event.target.value)} placeholder="Que se passe-t-il ? Ajoutez quelques détails…" /><small>Between 5 and 2000 characters</small></label>
         <div className="voice-entry">
           <label className="voice-language">Langue de dictée<select value={voiceLanguage} onChange={(event) => setVoiceLanguage(event.target.value)} disabled={voiceBusy}><option value="fr-FR">Français</option><option value="ar-TN">العربية</option><option value="en-US">English</option></select></label>
           <button type="button" className={`voice-button ${voiceBusy ? 'voice-button-active' : ''}`} onClick={() => void dictateIssue()} disabled={voiceBusy}><span aria-hidden="true">{voiceBusy ? '●' : '🎙'}</span>{voiceBusy ? 'Écoute en cours…' : 'Dicter le problème'}</button>
@@ -639,7 +672,7 @@ function Employee({ user, tickets, setTickets, onOpenChat }) {
         }} /><small className="upload-help">Jusqu’à 5 photos ou PDF, 10 Mo maximum par fichier.</small></label>
         {files.length > 0 && <ul className="selected-files">{files.map((file) => <li key={`${file.name}-${file.size}`}>{file.name}</li>)}</ul>}
         <label className="field">Niveau d’urgence<select value={urgency} onChange={(event) => setUrgency(event.target.value)}><option>Normale</option><option>Haute</option></select></label>
-        <button className="primary-action">Envoyer la demande <span aria-hidden="true">↗</span></button>
+        <button className="primary-action" disabled={assetsLoading || !!assetsError || !assetId}>Envoyer la demande <span aria-hidden="true">↗</span></button>
         <p className="form-caption"><span className="lock-icon">◈</span> Votre demande sera transmise uniquement à l’équipe IT.</p>
       </form>
       <section className="card tracking-card">
@@ -839,6 +872,7 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
     return { ok: true }
   }
   const count = (status) => tickets.filter((ticket) => ticket.status === status).length
+  const activeInterventionCount = tickets.filter((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)).length
   const welcomeLabel = isAdmin ? (activePage === 'overview' ? 'PILOTAGE ADMINISTRATEUR' : activePage === 'admin-users' ? 'ADMINISTRATION DES COMPTES' : activePage === 'branding' ? 'IDENTITÉ DE L’ENTREPRISE' : 'ANALYSE DU SUPPORT') : isManager && activePage === 'overview' ? 'PILOTAGE IT' : isManager ? 'GESTION DES INCIDENTS' : activePage === 'stats' ? 'STATISTIQUES' : activePage === 'map' ? 'PLAN DU SITE' : 'ESPACE TECHNICIEN'
   const welcomeText = isAdmin ? (activePage === 'admin-users' ? 'Gérez les accès et les rôles des comptes de votre organisation.' : activePage === 'branding' ? 'Personnalisez le nom et le logo visibles pour toute votre organisation.' : activePage === 'stats' ? 'Suivez le volume et les tendances de votre support informatique.' : 'Vue d’ensemble des incidents, des priorités et de la charge de l’équipe.') : isManager && activePage === 'overview' ? 'Suivez la charge, les priorités et les incidents à traiter.' : isManager ? 'Attribuez les demandes et coordonnez les interventions.' : 'Le tableau de bord de vos interventions.'
 
@@ -848,7 +882,7 @@ function Technician({ user, tickets, setTickets, notifications, setNotifications
       {canManageTickets && <button type="button" role="tab" id="tab-overview" aria-controls="panel-overview" aria-selected={activePage === 'overview'} className={activePage === 'overview' ? 'active' : ''} onClick={() => setActivePage('overview')}>{isAdmin ? 'Vue admin' : 'Vue manager'}</button>}
       {isAdmin && <button type="button" role="tab" id="tab-admin-users" aria-controls="panel-admin-users" aria-selected={activePage === 'admin-users'} className={activePage === 'admin-users' ? 'active' : ''} onClick={() => setActivePage('admin-users')}>Comptes</button>}
       {isAdmin && <button type="button" role="tab" id="tab-admin-branding" aria-controls="panel-admin-branding" aria-selected={activePage === 'branding'} className={activePage === 'branding' ? 'active' : ''} onClick={() => setActivePage('branding')}>Identité</button>}
-      {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')}>Interventions</button>}
+      {!isAdmin && <button type="button" role="tab" id="tab-tickets" aria-controls="panel-tickets" aria-selected={activePage === 'tickets'} className={activePage === 'tickets' ? 'active' : ''} onClick={() => setActivePage('tickets')} aria-label={`Interventions${activeInterventionCount ? `, ${activeInterventionCount} tickets actifs` : ''}`}>Interventions{activeInterventionCount > 0 && <span className="intervention-tab-badge">{activeInterventionCount > 99 ? '99+' : activeInterventionCount}</span>}</button>}
       <button type="button" role="tab" id="tab-tasks" aria-controls="panel-tasks" aria-selected={activePage === 'tasks'} className={activePage === 'tasks' ? 'active' : ''} onClick={() => setActivePage('tasks')} aria-label={`Tâches${unreadTaskCount ? `, ${unreadTaskCount} nouvelle${unreadTaskCount > 1 ? 's' : ''}` : ''}`}>{'T\u00e2ches'}{unreadTaskCount > 0 && <span className="task-tab-badge">{unreadTaskCount > 9 ? '9+' : unreadTaskCount}</span>}</button>
       <button type="button" role="tab" id="tab-inventory" aria-controls="panel-inventory" aria-selected={activePage === 'inventory'} className={activePage === 'inventory' ? 'active' : ''} onClick={() => setActivePage('inventory')}>Stock</button>
       <button type="button" role="tab" id="tab-stats" aria-controls="panel-stats" aria-selected={activePage === 'stats'} className={activePage === 'stats' ? 'active' : ''} onClick={() => setActivePage('stats')}>Statistiques</button>
@@ -1244,7 +1278,7 @@ function InventoryCenter({ user, tickets }) {
       </section>
     </div>
 
-    <section className="card inventory-history"><div className="card-heading"><div><p className="eyebrow">HISTORIQUE</p><h2>Mouvements de stock</h2></div></div><div className="inventory-date-filters"><label className="task-field">Depuis<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="task-field">Jusqu’au<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{periodMovements.length ? <div className="inventory-table-scroll"><table className="inventory-table"><thead><tr><th>Date</th><th>Mouvement</th><th>Article</th><th>Quantité</th><th>Équipement</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || 'Article' } · {itemById[movement.item_id]?.name || ''}</td><td className={movement.quantity_change > 0 ? 'inventory-quantity-in' : 'inventory-quantity-out'}>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table></div> : <p className="empty">Aucun mouvement pour cette période.</p>}</section>
+    <section className="card inventory-history"><div className="card-heading"><div><p className="eyebrow">HISTORIQUE</p><h2>Mouvements de stock</h2></div></div><div className="inventory-date-filters"><label className="task-field">Depuis<input type="date" value={fromDate} onChange={(event) => setFromDate(event.target.value)} /></label><label className="task-field">Jusqu’au<input type="date" value={toDate} onChange={(event) => setToDate(event.target.value)} /></label></div>{periodMovements.length ? <div className="inventory-table-scroll"><table className="inventory-table"><thead><tr><th>Date</th><th>Mouvement</th><th>Article</th><th>Quantité</th><th>Équipement</th><th>Incident</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || 'Article' } · {itemById[movement.item_id]?.name || ''}</td><td className={movement.quantity_change > 0 ? 'inventory-quantity-in' : 'inventory-quantity-out'}>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{tickets.find((ticket) => ticket.dbId === movement.ticket_id)?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table></div> : <p className="empty">Aucun mouvement pour cette période.</p>}</section>
 
     {printReady && <section className="inventory-print-report"><h1>Tesca Tech — État du stock</h1><p>Depuis le {fromDate || 'le début'} · Situation au {toDate || "aujourd'hui"}</p><h2>État de stock</h2><table><thead><tr><th>Référence</th><th>Consommable</th><th>Couleur</th><th>Quantité disponible</th><th>Seuil</th><th>État</th></tr></thead><tbody>{activeItems.map((item) => { const balance = stockAtDate(item.id); return <tr key={item.id}><td>{item.code}</td><td>{item.name}</td><td>{item.color || '—'}</td><td>{balance}</td><td>{item.min_stock}</td><td>{balance <= item.min_stock ? 'Stock bas' : 'Disponible'}</td></tr> })}</tbody></table><h2>Mouvements sur la période</h2><table><thead><tr><th>Date</th><th>Mouvement</th><th>Référence</th><th>Couleur</th><th>Quantité</th><th>Équipement</th><th>Incident</th><th>Technicien</th><th>Note</th></tr></thead><tbody>{periodMovements.map((movement) => <tr key={movement.id}><td>{new Date(movement.created_at).toLocaleString('fr-FR')}</td><td>{movementLabel[movement.movement_type]}</td><td>{itemById[movement.item_id]?.code || '—'} · {itemById[movement.item_id]?.name || ''}</td><td>{itemById[movement.item_id]?.color || '—'}</td><td>{movement.quantity_change > 0 ? '+' : ''}{movement.quantity_change}</td><td>{equipmentById[movement.asset_id]?.id || '—'}</td><td>{tickets.find((ticket) => ticket.dbId === movement.ticket_id)?.id || '—'}</td><td>{nameById[movement.technician_id] || 'Technicien'}</td><td>{movement.note || '—'}</td></tr>)}</tbody></table><footer>Rapport généré le {new Date().toLocaleString('fr-FR')} · Tesca Tech</footer></section>}
   </section>
@@ -1549,7 +1583,7 @@ function AdminBranding({ brand, onBrandChanged }) {
 
 function FacilityMap({ tickets, user }) {
   const [selectedAssetId, setSelectedAssetId] = useState(null)
-  const [mapAssets, setMapAssets] = useState(assets)
+  const [mapAssets, setMapAssets] = useState(() => assets.map((asset) => [...asset, 'unknown', null]))
   const [positions, setPositions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('facility-map-positions') || '{}') } catch { return {} }
   })
@@ -1569,14 +1603,26 @@ function FacilityMap({ tickets, user }) {
   const [newAsset, setNewAsset] = useState({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
   const [assetBusy, setAssetBusy] = useState(false)
   const [assetNotice, setAssetNotice] = useState(null)
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusMessage, setStatusMessage] = useState('')
+  const [statusSchemaReady, setStatusSchemaReady] = useState(false)
   const canEdit = ['it_manager', 'admin'].includes(user?.role)
+  const canUpdateStatus = ['technician', 'it_manager', 'admin'].includes(user?.role)
+  const statusOptions = [
+    { value: 'operational', label: 'Opérationnel', symbol: '✓' },
+    { value: 'out_of_service', label: 'Hors service', symbol: '!' },
+    { value: 'maintenance', label: 'En maintenance', symbol: '⚒' },
+    { value: 'unknown', label: 'Non vérifié', symbol: '?' },
+  ]
+  const statusLabel = (value) => statusOptions.find((option) => option.value === value)?.label || 'Non vérifié'
 
   useEffect(() => {
     let active = true
     const refreshSharedMap = async () => {
       const [mapsResult, assetsResult] = await Promise.all([
         supabase.from('facility_maps').select('id, name, map_path').order('created_at'),
-        supabase.from('assets').select('id, name, kind, department, location').order('id'),
+        supabase.from('assets').select('id, name, kind, department, location, operational_status, status_updated_at').order('id'),
       ])
       if (!active) return
       if (mapsResult.error) setMapError(mapsResult.error.message)
@@ -1596,8 +1642,18 @@ function FacilityMap({ tickets, user }) {
         } else setMapImageUrl('')
       }
       if (!assetsResult.error) {
-        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+        setStatusSchemaReady(true)
+        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at]))
         setSelectedAssetId((current) => current && assetsResult.data.some((asset) => asset.id === current) ? current : null)
+      } else {
+        const fallbackAssets = await supabase.from('assets').select('id, name, kind, department, location').order('id')
+        if (!active) return
+        if (!fallbackAssets.error) {
+          setStatusSchemaReady(false)
+          setMapAssets(fallbackAssets.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, 'unknown', null]))
+          setMapError('Appliquez la migration supabase/migrations/028_equipment_operational_status.sql pour activer les états du matériel.')
+          setSelectedAssetId((current) => current && fallbackAssets.data.some((asset) => asset.id === current) ? current : null)
+        } else setMapError(assetsResult.error.message)
       }
       const { data: positionRows, error: positionsError } = activeMapId ? await supabase.from('facility_map_positions').select('asset_id, x, y').eq('map_id', activeMapId) : { data: [], error: null }
       if (positionsError) setMapError(positionsError.message)
@@ -1626,6 +1682,7 @@ function FacilityMap({ tickets, user }) {
   }
   const zones = [...new Set(mapAssets.map((asset) => getZone(asset[3])))]
   const selectedAsset = mapAssets.find((asset) => asset[0] === selectedAssetId)
+  const visibleAssets = mapAssets.map((asset, index) => ({ asset, index })).filter(({ asset }) => statusFilter === 'all' || (asset[5] || 'unknown') === statusFilter)
   const pointsByZone = [[[54, 46], [61, 50], [58, 56]], [[78, 62], [84, 70], [80, 76]], [[26, 78], [32, 84], [38, 77], [43, 82]], [[55, 61], [62, 58], [68, 64], [72, 56]], [[82, 34], [88, 40]]]
   const markerPosition = (asset, index) => {
     if (positions[asset[0]]) return { left: `${positions[asset[0]].x}%`, top: `${positions[asset[0]].y}%` }
@@ -1672,11 +1729,24 @@ function FacilityMap({ tickets, user }) {
     else {
       setNewAsset({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
       setAddingAsset(false)
-      const { data } = await supabase.from('assets').select('id, name, kind, department, location').order('id')
-      if (data) setMapAssets(data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind]))
+      const { data } = await supabase.from('assets').select('id, name, kind, department, location, operational_status, status_updated_at').order('id')
+      if (data) setMapAssets(data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at]))
       setAssetNotice({ type: 'success', title: 'Équipement ajouté', text: `« ${record.name} » a été ajouté à la carte du site.` })
     }
     setAssetBusy(false)
+  }
+  const updateAssetStatus = async (assetId, operationalStatus) => {
+    if (!canUpdateStatus || !statusSchemaReady || !assetId || statusBusy) return
+    setStatusBusy(true)
+    setStatusMessage('')
+    setMapError('')
+    const { data, error } = await supabase.from('assets').update({ operational_status: operationalStatus }).eq('id', assetId).select('operational_status, status_updated_at').single()
+    if (error) setMapError(error.message)
+    else {
+      setMapAssets((current) => current.map((asset) => asset[0] === assetId ? [...asset.slice(0, 5), data.operational_status, data.status_updated_at] : asset))
+      setStatusMessage('État du matériel mis à jour et partagé avec l’équipe.')
+    }
+    setStatusBusy(false)
   }
   const deleteAsset = async (asset) => {
     if (!canEdit || !asset || !window.confirm(`Supprimer l’équipement ${asset[0]} — ${asset[1]} de la carte ?`)) return
@@ -1792,13 +1862,35 @@ function FacilityMap({ tickets, user }) {
     <div className="facility-map-tabs" role="tablist" aria-label="Plans du site">{facilityMaps.map((map) => <button type="button" role="tab" aria-selected={activeMapId === map.id} className={activeMapId === map.id ? 'active' : ''} key={map.id} onClick={() => { setActiveMapId(map.id); setPositions({}); positionsRef.current = {}; setMapZoom(1) }}>{map.name}</button>)}{!facilityMaps.length && <span>Aucun plan. Un responsable peut en ajouter un.</span>}</div>
     {mapError && <p className="map-upload-error" role="alert">{mapError}</p>}
     {addingAsset && canEdit && <form className="map-asset-form" onSubmit={(event) => void addAsset(event)}><input required maxLength={80} placeholder="Référence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required maxLength={160} placeholder="Nom de l’équipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><input required maxLength={80} placeholder="Type (PC fixe, imprimante…)" value={newAsset.kind} onChange={(event) => setNewAsset({ ...newAsset, kind: event.target.value })} /><input required maxLength={120} placeholder="Service" value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })} /><input required maxLength={160} placeholder="Bâtiment, étage, bureau" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit" disabled={assetBusy}>{assetBusy ? 'Ajout…' : 'Ajouter'}</button></form>}
+    <div className="facility-map-status-filters" role="group" aria-label="Filtrer par état du matériel">
+      <button type="button" className={statusFilter === 'all' ? 'active' : ''} onClick={() => setStatusFilter('all')}>Tout <span>{mapAssets.length}</span></button>
+      {statusOptions.map((status) => <button type="button" key={status.value} className={`status-filter-${status.value}${statusFilter === status.value ? ' active' : ''}`} onClick={() => setStatusFilter(status.value)}><i />{status.label}<span>{mapAssets.filter((asset) => (asset[5] || 'unknown') === status.value).length}</span></button>)}
+    </div>
+    <p className="facility-map-status-note">Le cercle rouge autour d’un repère indique un incident ouvert. Il ne modifie pas l’état du matériel.</p>
     {activeMapId ? <div className="facility-plan">
       <div className={`facility-plan-image ${is3d ? 'map-view-3d' : ''}`} style={{ '--map-zoom': mapZoom }} onPointerDown={handleMapPointerDown} onPointerMove={handleMapPointerMove} onPointerUp={handleMapPointerEnd} onPointerCancel={handleMapPointerEnd}>
         <img src={mapImageUrl || officeFloorplan} alt="Plan du site" />
-        {mapAssets.map((asset, index) => { const assetTickets = tickets.filter((ticket) => ticket.assetId === asset[0]); const hasOpen = assetTickets.some((ticket) => !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status)); return <button type="button" onPointerDown={(event) => { if (!canEdit || mapPointers.current.size > 1) return; if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); draggedAsset.current = { id: asset[0], pointerId: event.pointerId } }} className={`facility-plan-pin ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} - ${asset[3]}`} aria-label={`Equipement ${index + 1}: ${asset[1]} (${asset[0]})`}>{index + 1}</button> })}
+        {visibleAssets.map(({ asset, index }) => {
+          const hasOpen = tickets.some((ticket) => ticket.assetId === asset[0] && !['R\u00e9solu', 'Cl\u00f4tur\u00e9', 'Annul\u00e9'].includes(ticket.status))
+          const status = asset[5] || 'unknown'
+          return <button type="button" onPointerDown={(event) => { if (!canEdit || mapPointers.current.size > 1) return; if (event.pointerType === 'touch' || event.pointerType === 'pen') event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); draggedAsset.current = { id: asset[0], pointerId: event.pointerId } }} className={`facility-plan-pin status-${status} ${hasOpen ? 'has-open-ticket' : ''} ${selectedAssetId === asset[0] ? 'selected' : ''}`} key={asset[0]} style={markerPosition(asset, index)} onClick={() => setSelectedAssetId(asset[0])} title={`${asset[1]} - ${statusLabel(status)}${hasOpen ? ' - Incident ouvert' : ''}`} aria-label={`Equipement ${index + 1}: ${asset[1]} (${asset[0]}), etat : ${statusLabel(status)}${hasOpen ? ', incident ouvert' : ''}`}>{index + 1}</button>
+        })}
       </div>
-      <div className="facility-map-asset-index" aria-label="Numeros des equipements">{mapAssets.map((asset, index) => <button type="button" className={selectedAssetId === asset[0] ? 'active' : ''} key={asset[0]} onClick={() => setSelectedAssetId(asset[0])}><b>{index + 1}</b><span>{asset[0]} · {asset[1]}</span></button>)}</div>
-      {selectedAsset && <section className="facility-map-selection" aria-live="polite"><div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span>Equipement selectionne</span></div><p className="map-location-edit">Emplacement : {selectedAsset[3]}</p>{canEdit && <button type="button" className="delete-map-asset" onClick={() => void deleteAsset(selectedAsset)} disabled={assetBusy}>Supprimer</button>}</section>}
+      <div className="facility-map-asset-index" aria-label="Liste des equipements">
+        {visibleAssets.map(({ asset, index }) => {
+          const status = asset[5] || 'unknown'
+          return <button type="button" className={`facility-map-asset-row status-${status}${selectedAssetId === asset[0] ? ' active' : ''}`} key={asset[0]} onClick={() => { setSelectedAssetId(asset[0]); setStatusMessage('') }}><b>{index + 1}</b><span className="facility-map-asset-copy"><strong>{asset[0]} - {asset[1]}</strong><small><i className={`asset-status-dot status-${status}`} />{statusLabel(status)}</small></span></button>
+        })}
+        {!visibleAssets.length && <p className="empty">Aucun equipement dans cet etat.</p>}
+      </div>
+      {selectedAsset && <section className="facility-map-selection" aria-live="polite">
+        <div className="facility-map-selection-heading"><div><h3>{selectedAsset[1]}</h3><small>{selectedAsset[0]} - {selectedAsset[2]}</small></div><span className={`asset-status-badge status-${selectedAsset[5] || 'unknown'}`}><i className={`asset-status-dot status-${selectedAsset[5] || 'unknown'}`} />{statusLabel(selectedAsset[5] || 'unknown')}</span></div>
+        <p className="map-location-edit">Emplacement : {selectedAsset[3]}</p>
+        {selectedAsset[6] && <p className="asset-status-updated">Etat verifie le {new Date(selectedAsset[6]).toLocaleString('fr-FR')}</p>}
+        {canUpdateStatus && <label className="asset-status-control">Etat du materiel<select value={selectedAsset[5] || 'unknown'} onChange={(event) => void updateAssetStatus(selectedAsset[0], event.target.value)} disabled={!statusSchemaReady || statusBusy}><option value="unknown">Non verifie</option><option value="operational">Operationnel</option><option value="out_of_service">Hors service</option><option value="maintenance">En maintenance</option></select></label>}
+        {statusMessage && <p className="asset-status-success" role="status">{statusMessage}</p>}
+        {canEdit && <button type="button" className="delete-map-asset" onClick={() => void deleteAsset(selectedAsset)} disabled={assetBusy}>Supprimer</button>}
+      </section>}
     </div> : <p className="empty">Aucun plan disponible.</p>}
     {assetNotice && <MapAssetResultDialog notice={assetNotice} onClose={() => setAssetNotice(null)} />}
   </section>
@@ -1954,6 +2046,7 @@ function TicketAnalytics({ tickets }) {
 }
 function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user, onOpenChat, update, escalate, savePlaybook, saveResolutionArticle, updateError, technicians = [], assignmentId = '', setAssignmentId, assignTicket, assignmentBusy = false }) {
   const [note, setNote] = useState(ticket.note)
+  const [resolutionSuccess, setResolutionSuccess] = useState(false)
   const [playbookId, setPlaybookId] = useState(ticket.playbook?.playbookId || suggestPlaybook(ticket))
   const [checkedSteps, setCheckedSteps] = useState(ticket.playbook?.checkedSteps || [])
   const [playbookNote, setPlaybookNote] = useState(ticket.playbook?.note || '')
@@ -2024,10 +2117,14 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
   }
   const resolveTicket = async () => {
     const resolvedStatus = Object.keys(dbStatus).find((status) => dbStatus[status] === 'resolved')
-    if (await update(resolvedStatus, note)) await playResolutionSound()
+    if (await update(resolvedStatus, note)) {
+      setResolutionSuccess(true)
+      await playResolutionSound()
+    }
   }
   const asset = getAsset(ticket.assetId)
   return <section ref={detailRef} className="card detail-card">
+    {resolutionSuccess && <SuccessDialog reference={ticket.id} title={'Intervention r\u00e9solue !'} body={"Le statut a \u00e9t\u00e9 mis \u00e0 jour. L'employ\u00e9 pourra suivre la demande."} kicker={'R\u00c9SOLUTION ENREGISTR\u00c9E'} continueLabel="Continuer" onClose={() => setResolutionSuccess(false)} />}
     {showMobileBack && <button type="button" className="mobile-detail-back" onClick={onBackToQueue}>← Retour à la file</button>}
     {updateError && <p className="form-message" role="alert">{updateError}</p>}
     <div className="detail-head"><div><p className="eyebrow">FICHE D’INTERVENTION <span className="reference">{ticket.id}</span></p><h2>{asset[1]}</h2><p className="subtle small">{asset[0]} <span>·</span> {asset[3]}</p></div><Status status={ticket.status} /></div>
@@ -2036,6 +2133,7 @@ function Detail({ detailRef, onBackToQueue, showMobileBack = false, ticket, user
     <SlaIndicator ticket={ticket} />
     <div className="issue"><small>DESCRIPTION DU PROBLÈME</small><p>{ticket.issue}</p></div>
     <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
+    {ticket.status !== 'Annulé' && <TicketParts ticket={ticket} />}
     {ticket.status !== 'Annulé' && <section className="repair-playbook">
       <div className="playbook-heading"><div><p className="eyebrow">GUIDE DE DIAGNOSTIC</p><h3>Playbook de réparation</h3></div><span className="playbook-count">{checkedSteps.length}/{activePlaybook.steps.length}</span></div>
       <div className="technician-ai-card"><div className="technician-ai-heading"><div><p className="eyebrow">ASSISTANT IA · CONSEILS À VÉRIFIER</p><p>Obtenez des pistes de diagnostic à partir du problème signalé.</p></div><button type="button" className="technician-ai-button" onClick={requestAiAdvice} disabled={aiBusy}>{aiBusy ? 'Analyse…' : '✦ Suggérer des étapes'}</button></div><small className="technician-ai-privacy">La description du ticket est envoyée au service IA configuré par votre entreprise.</small>
@@ -2091,6 +2189,93 @@ function Ticket({ ticket, user, onOpenChat, onCancel, highlighted = false }) {
     </div>}
     <TicketChat ticket={ticket} user={user} onOpenChat={onOpenChat} />
   </article>
+}
+
+function TicketParts({ ticket }) {
+  const [items, setItems] = useState([])
+  const [usedParts, setUsedParts] = useState([])
+  const [itemId, setItemId] = useState('')
+  const [quantity, setQuantity] = useState('1')
+  const [note, setNote] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [message, setMessage] = useState('')
+
+  const refresh = async () => {
+    setLoading(true)
+    const [itemsResult, movementsResult] = await Promise.all([
+      supabase.from('inventory_items').select('id, code, name, color, active').order('name'),
+      loadAllInventoryMovements(),
+    ])
+    if (itemsResult.error || movementsResult.error) {
+      setError(itemsResult.error?.message || movementsResult.error?.message || 'Impossible de charger le stock.')
+      setLoading(false)
+      return
+    }
+    const inventoryItems = itemsResult.data || []
+    const movements = movementsResult.data || []
+    const balances = movements.reduce((result, movement) => {
+      result[movement.item_id] = (result[movement.item_id] || 0) + movement.quantity_change
+      return result
+    }, {})
+    setItems(inventoryItems.filter((item) => item.active).map((item) => ({ ...item, balance: balances[item.id] || 0 })))
+    setUsedParts(movements
+      .filter((movement) => movement.ticket_id === ticket.dbId && movement.movement_type === 'usage')
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at))
+      .map((movement) => ({ ...movement, item: inventoryItems.find((item) => item.id === movement.item_id) })))
+    setLoading(false)
+  }
+
+  useEffect(() => {
+    setError('')
+    setMessage('')
+    void refresh()
+  }, [ticket.dbId])
+
+  const selectedItem = items.find((item) => item.id === itemId)
+  const savePartUsage = async (event) => {
+    event.preventDefault()
+    if (!selectedItem) return
+    setSaving(true)
+    setError('')
+    setMessage('')
+    const count = Number(quantity)
+    const { error: movementError } = await supabase.rpc('record_inventory_movement', {
+      p_item_id: selectedItem.id,
+      p_movement_type: 'usage',
+      p_quantity: count,
+      p_adjustment_direction: 'remove',
+      p_asset_id: ticket.assetId,
+      p_ticket_id: ticket.dbId,
+      p_note: note.trim(),
+    })
+    if (movementError) {
+      const stockError = movementError.message.match(/Insufficient stock: only (\d+) item\(s\) are available/i)
+      setError(stockError ? `Stock insuffisant : ${stockError[1]} disponible(s).` : movementError.message)
+    } else {
+      setQuantity('1')
+      setNote('')
+      setMessage('Pièce enregistrée et stock mis à jour.')
+      await refresh()
+    }
+    setSaving(false)
+  }
+
+  return <section className="ticket-parts" aria-labelledby="ticket-parts-title">
+    <div className="ticket-parts-heading"><div><p className="eyebrow">PIÈCES ET CONSOMMABLES</p><h3 id="ticket-parts-title">Utilisés sur cette intervention</h3><p>Le stock baisse dès l’enregistrement.</p></div><span>{usedParts.length}</span></div>
+    {error && <p className="form-message" role="alert">{error}</p>}
+    {loading ? <p className="empty">Chargement du stock…</p> : <>
+      {items.length ? <form className="ticket-parts-form" onSubmit={(event) => void savePartUsage(event)}>
+        <label className="task-field">Pièce ou consommable<select required value={itemId} onChange={(event) => setItemId(event.target.value)}><option value="">Choisir un article</option>{items.map((item) => <option key={item.id} value={item.id} disabled={item.balance <= 0}>{item.code} · {item.name}{item.color ? ` (${item.color})` : ''} — {item.balance} en stock</option>)}</select></label>
+        <label className="task-field">Quantité<input required type="number" min="1" max="100000" step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+        <label className="task-field ticket-parts-note">Note (facultative)<input maxLength="500" value={note} onChange={(event) => setNote(event.target.value)} placeholder="Ex. remplacé pendant le dépannage" /></label>
+        <button type="submit" disabled={saving || !selectedItem || Number(quantity) > selectedItem.balance}>{saving ? 'Enregistrement…' : 'Enregistrer la pièce'}</button>
+      </form> : <p className="empty">Aucun article actif. Ajoutez-en dans Stock et mouvements.</p>}
+      {message && <p className="ticket-parts-success" role="status">{message}</p>}
+      {usedParts.length > 0 && <div className="ticket-parts-history" aria-label="Pièces enregistrées pour ce ticket">{usedParts.map((movement) => <article key={movement.id}><div><b>{movement.item?.code || 'Article'} · {movement.item?.name || 'Article archivé'}</b><small>{new Date(movement.created_at).toLocaleString('fr-FR')}{movement.note ? ` · ${movement.note}` : ''}</small></div><strong>−{Math.abs(movement.quantity_change)}</strong></article>)}</div>}
+    </>}
+  </section>
 }
 
 function TicketChat({ ticket, user, startOpen = false, hideLauncher = false, onClose, onOpenChat }) {
