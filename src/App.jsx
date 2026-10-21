@@ -1594,6 +1594,7 @@ function FacilityMap({ tickets, user }) {
   const [facilityMaps, setFacilityMaps] = useState([])
   const [activeMapId, setActiveMapId] = useState('')
   const [mapBusy, setMapBusy] = useState(false)
+  const [mapDeleteBusy, setMapDeleteBusy] = useState(false)
   const [mapError, setMapError] = useState('')
   const [is3d, setIs3d] = useState(false)
   const [mapZoom, setMapZoom] = useState(1)
@@ -1874,9 +1875,39 @@ function FacilityMap({ tickets, user }) {
     if (error) setMapError(error.message)
     else { setFacilityMaps((maps) => [...maps, data]); setActiveMapId(data.id); setPositions({}); positionsRef.current = {} }
   }
+  const deleteNamedMap = async () => {
+    const map = facilityMaps.find((item) => item.id === activeMapId)
+    if (!canEdit || !map || mapDeleteBusy) return
+    if (!window.confirm(`Supprimer le plan « ${map.name} » et ses équipements associés ?`)) return
+    setMapDeleteBusy(true)
+    setMapError('')
+    const { error } = await supabase.from('facility_maps').delete().eq('id', map.id)
+    if (error) {
+      setMapError(error.message)
+      setMapDeleteBusy(false)
+      return
+    }
+    const remainingMaps = facilityMaps.filter((item) => item.id !== map.id)
+    const nextMap = remainingMaps[0]
+    setFacilityMaps(remainingMaps)
+    setActiveMapId(nextMap?.id || '')
+    setPositions({})
+    positionsRef.current = {}
+    setMapAssets([])
+    setSelectedAssetId(null)
+    if (map.map_path) {
+      const { data: references, error: referenceError } = await supabase.from('facility_maps').select('id').eq('map_path', map.map_path).limit(1)
+      if (!referenceError && !references?.length) {
+        const { error: storageError } = await supabase.storage.from('facility-maps').remove([map.map_path])
+        if (storageError) setMapError(storageError.message)
+      } else if (referenceError) setMapError(referenceError.message)
+    }
+    setMapDeleteBusy(false)
+  }
   return <section className="facility-map card">
     <div className="facility-map-heading"><div><p className="eyebrow">PLAN INTERACTIF</p><h2>Carte du site</h2><p>{canEdit ? 'Importez un plan, puis deplacez les reperes numerotes.' : 'Selectionnez un numero pour afficher l equipement correspondant.'}</p></div><div className="facility-map-actions">
       {canEdit && <button type="button" className="add-map-asset" onClick={() => void addNamedMap()}>+ Ajouter un plan</button>}
+      {canEdit && activeMapId && <button type="button" className="delete-map-action" onClick={() => void deleteNamedMap()} disabled={mapDeleteBusy}>{mapDeleteBusy ? 'Suppression...' : 'Supprimer ce plan'}</button>}
       {canEdit && activeMapId && <label className="map-upload-control">{mapBusy ? 'Import en cours...' : mapImageUrl ? 'Changer le plan' : 'Importer un plan'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={(event) => void uploadMap(event)} disabled={mapBusy} /></label>}
       {canEdit && activeMapId && <button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un équipement</button>}
       <div className="map-zoom-controls" aria-label="Zoom"><button type="button" onClick={() => setMapZoom((zoom) => Math.max(0.75, +(zoom - 0.25).toFixed(2)))} aria-label="Zoom arriere" disabled={mapZoom <= 0.75}>-</button><span>{Math.round(mapZoom * 100)}%</span><button type="button" onClick={() => setMapZoom((zoom) => Math.min(2, +(zoom + 0.25).toFixed(2)))} aria-label="Zoom avant" disabled={mapZoom >= 2}>+</button><button type="button" onClick={() => setMapZoom(1)} aria-label="Reinitialiser le zoom">Reset</button></div>
