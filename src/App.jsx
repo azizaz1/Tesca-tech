@@ -398,7 +398,7 @@ function Login({ brand }) {
       : await supabase.auth.signInWithPassword({ email, password })
     setLoading(false)
     const duplicateEmail = signup && !result.error && result.data?.user?.identities?.length === 0
-    setMessage(result.error ? result.error.message : duplicateEmail ? 'Un compte existe déjà avec cette adresse e-mail.' : signup ? 'Compte créé. Vérifiez votre boîte mail pour confirmer votre adresse.' : '')
+    setMessage(result.error ? result.error.message : duplicateEmail ? 'Un compte existe déjà avec cette adresse e-mail.' : signup ? result.data?.session ? 'Compte créé. Vous êtes connecté.' : 'Compte créé. Vérifiez votre boîte mail pour confirmer votre adresse.' : '')
   }
 
   const switchMode = () => {
@@ -1584,6 +1584,7 @@ function AdminBranding({ brand, onBrandChanged }) {
 function FacilityMap({ tickets, user }) {
   const [selectedAssetId, setSelectedAssetId] = useState(null)
   const [mapAssets, setMapAssets] = useState(() => assets.map((asset) => [...asset, 'unknown', null]))
+  const [allMapAssets, setAllMapAssets] = useState(() => assets.map((asset) => [...asset, 'unknown', null]))
   const [positions, setPositions] = useState(() => {
     try { return JSON.parse(localStorage.getItem('facility-map-positions') || '{}') } catch { return {} }
   })
@@ -1620,6 +1621,7 @@ function FacilityMap({ tickets, user }) {
   useEffect(() => {
     let active = true
     const refreshSharedMap = async () => {
+      let currentAssets = allMapAssets
       const [mapsResult, assetsResult] = await Promise.all([
         supabase.from('facility_maps').select('id, name, map_path').order('created_at'),
         supabase.from('assets').select('id, name, kind, department, location, operational_status, status_updated_at').order('id'),
@@ -1643,14 +1645,17 @@ function FacilityMap({ tickets, user }) {
       }
       if (!assetsResult.error) {
         setStatusSchemaReady(true)
-        setMapAssets(assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at]))
+        const loadedAssets = assetsResult.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at])
+        currentAssets = loadedAssets
+        setAllMapAssets(loadedAssets)
         setSelectedAssetId((current) => current && assetsResult.data.some((asset) => asset.id === current) ? current : null)
       } else {
         const fallbackAssets = await supabase.from('assets').select('id, name, kind, department, location').order('id')
         if (!active) return
         if (!fallbackAssets.error) {
           setStatusSchemaReady(false)
-          setMapAssets(fallbackAssets.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, 'unknown', null]))
+          currentAssets = fallbackAssets.data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, 'unknown', null])
+          setAllMapAssets(currentAssets)
           setMapError('Appliquez la migration supabase/migrations/028_equipment_operational_status.sql pour activer les états du matériel.')
           setSelectedAssetId((current) => current && fallbackAssets.data.some((asset) => asset.id === current) ? current : null)
         } else setMapError(assetsResult.error.message)
@@ -1661,6 +1666,8 @@ function FacilityMap({ tickets, user }) {
         const shared = Object.fromEntries((positionRows || []).map((position) => [position.asset_id, { x: Number(position.x), y: Number(position.y) }]))
         positionsRef.current = shared
         setPositions(shared)
+        const assignedIds = new Set(Object.keys(shared))
+        setMapAssets(currentAssets.filter((asset) => assignedIds.has(asset[0])))
       }
     }
     void refreshSharedMap()
@@ -1730,10 +1737,26 @@ function FacilityMap({ tickets, user }) {
       setNewAsset({ id: '', name: '', kind: 'PC fixe', department: 'Infrastructure', location: '' })
       setAddingAsset(false)
       const { data } = await supabase.from('assets').select('id, name, kind, department, location, operational_status, status_updated_at').order('id')
-      if (data) setMapAssets(data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at]))
+      if (data) {
+        const loaded = data.map((asset) => [asset.id, asset.name, asset.department, asset.location, asset.kind, asset.operational_status || 'unknown', asset.status_updated_at])
+        setAllMapAssets((current) => [...current.filter((item) => !loaded.some((asset) => asset[0] === item[0])), ...loaded])
+        if (activeMapId) {
+          const { error: positionError } = await supabase.from('facility_map_positions').upsert({ map_id: activeMapId, asset_id: record.id, x: 50, y: 50, updated_by: user.id }, { onConflict: 'map_id,asset_id' })
+          if (positionError) setMapError(positionError.message)
+        }
+      }
       setAssetNotice({ type: 'success', title: 'Équipement ajouté', text: `« ${record.name} » a été ajouté à la carte du site.` })
     }
     setAssetBusy(false)
+  }
+  const addExistingAssetToMap = async (assetId) => {
+    if (!canEdit || !activeMapId || !assetId) return
+    const { error } = await supabase.from('facility_map_positions').upsert({ map_id: activeMapId, asset_id: assetId, x: 50, y: 50, updated_by: user.id }, { onConflict: 'map_id,asset_id' })
+    if (error) setMapError(error.message)
+    else {
+      setPositions((current) => { const next = { ...current, [assetId]: { x: 50, y: 50 } }; positionsRef.current = next; return next })
+      setMapAssets((current) => current.some((asset) => asset[0] === assetId) ? current : [...current, allMapAssets.find((asset) => asset[0] === assetId)].filter(Boolean))
+    }
   }
   const updateAssetStatus = async (assetId, operationalStatus) => {
     if (!canUpdateStatus || !statusSchemaReady || !assetId || statusBusy) return
@@ -1855,13 +1878,13 @@ function FacilityMap({ tickets, user }) {
     <div className="facility-map-heading"><div><p className="eyebrow">PLAN INTERACTIF</p><h2>Carte du site</h2><p>{canEdit ? 'Importez un plan, puis deplacez les reperes numerotes.' : 'Selectionnez un numero pour afficher l equipement correspondant.'}</p></div><div className="facility-map-actions">
       {canEdit && <button type="button" className="add-map-asset" onClick={() => void addNamedMap()}>+ Ajouter un plan</button>}
       {canEdit && activeMapId && <label className="map-upload-control">{mapBusy ? 'Import en cours...' : mapImageUrl ? 'Changer le plan' : 'Importer un plan'}<input type="file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" onChange={(event) => void uploadMap(event)} disabled={mapBusy} /></label>}
-      {canEdit && <button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un équipement</button>}
+      {canEdit && activeMapId && <button type="button" className="add-map-asset" onClick={() => setAddingAsset((value) => !value)}>Ajouter un équipement</button>}
       <div className="map-zoom-controls" aria-label="Zoom"><button type="button" onClick={() => setMapZoom((zoom) => Math.max(0.75, +(zoom - 0.25).toFixed(2)))} aria-label="Zoom arriere" disabled={mapZoom <= 0.75}>-</button><span>{Math.round(mapZoom * 100)}%</span><button type="button" onClick={() => setMapZoom((zoom) => Math.min(2, +(zoom + 0.25).toFixed(2)))} aria-label="Zoom avant" disabled={mapZoom >= 2}>+</button><button type="button" onClick={() => setMapZoom(1)} aria-label="Reinitialiser le zoom">Reset</button></div>
       <button type="button" className={is3d ? 'active' : ''} onClick={() => setIs3d((value) => !value)}>{is3d ? 'Vue 2D' : 'Vue 3D'}</button>
     </div></div>
     <div className="facility-map-tabs" role="tablist" aria-label="Plans du site">{facilityMaps.map((map) => <button type="button" role="tab" aria-selected={activeMapId === map.id} className={activeMapId === map.id ? 'active' : ''} key={map.id} onClick={() => { setActiveMapId(map.id); setPositions({}); positionsRef.current = {}; setMapZoom(1) }}>{map.name}</button>)}{!facilityMaps.length && <span>Aucun plan. Un responsable peut en ajouter un.</span>}</div>
     {mapError && <p className="map-upload-error" role="alert">{mapError}</p>}
-    {addingAsset && canEdit && <form className="map-asset-form" onSubmit={(event) => void addAsset(event)}><input required maxLength={80} placeholder="Référence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required maxLength={160} placeholder="Nom de l’équipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><input required maxLength={80} placeholder="Type (PC fixe, imprimante…)" value={newAsset.kind} onChange={(event) => setNewAsset({ ...newAsset, kind: event.target.value })} /><input required maxLength={120} placeholder="Service" value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })} /><input required maxLength={160} placeholder="Bâtiment, étage, bureau" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit" disabled={assetBusy}>{assetBusy ? 'Ajout…' : 'Ajouter'}</button></form>}
+    {addingAsset && canEdit && activeMapId && <><div className="map-asset-form"><select aria-label="Associer un equipement existant" defaultValue="" onChange={(event) => { void addExistingAssetToMap(event.target.value); event.target.value = '' }}><option value="">Associer un equipement existant...</option>{allMapAssets.filter((asset) => !mapAssets.some((mapped) => mapped[0] === asset[0])).map((asset) => <option key={asset[0]} value={asset[0]}>{asset[0]} - {asset[1]}</option>)}</select></div><form className="map-asset-form" onSubmit={(event) => void addAsset(event)}><input required maxLength={80} placeholder="Référence (ex. PC-IT-005)" value={newAsset.id} onChange={(event) => setNewAsset({ ...newAsset, id: event.target.value })} /><input required maxLength={160} placeholder="Nom de l’équipement" value={newAsset.name} onChange={(event) => setNewAsset({ ...newAsset, name: event.target.value })} /><input required maxLength={80} placeholder="Type (PC fixe, imprimante…)" value={newAsset.kind} onChange={(event) => setNewAsset({ ...newAsset, kind: event.target.value })} /><input required maxLength={120} placeholder="Service" value={newAsset.department} onChange={(event) => setNewAsset({ ...newAsset, department: event.target.value })} /><input required maxLength={160} placeholder="Bâtiment, étage, bureau" value={newAsset.location} onChange={(event) => setNewAsset({ ...newAsset, location: event.target.value })} /><button type="submit" disabled={assetBusy}>{assetBusy ? 'Ajout…' : 'Ajouter'}</button></form></>}
     <div className="facility-map-status-filters" role="group" aria-label="Filtrer par état du matériel">
       <button type="button" className={statusFilter === 'all' ? 'active' : ''} onClick={() => setStatusFilter('all')}>Tout <span>{mapAssets.length}</span></button>
       {statusOptions.map((status) => <button type="button" key={status.value} className={`status-filter-${status.value}${statusFilter === status.value ? ' active' : ''}`} onClick={() => setStatusFilter(status.value)}><i />{status.label}<span>{mapAssets.filter((asset) => (asset[5] || 'unknown') === status.value).length}</span></button>)}
