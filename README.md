@@ -65,6 +65,8 @@ IT managers and admins can remove an unused asset from its selected item card on
 
 The map shows each asset as **Operational**, **Out of service**, **Under maintenance**, or **Not checked**, with matching colors in the map pins and equipment list. Technicians, IT managers, and admins can update an asset status; an open ticket is shown separately and does not automatically mark the asset out of service. Apply `supabase/migrations/028_equipment_operational_status.sql` after migration 027 to store shared status and its last update time.
 
+IT managers and admins can move an existing asset to another facility map; the move removes its marker from other maps atomically. Apply `supabase/migrations/029_move_equipment_between_maps.sql` after migration 028 to enable this operation.
+
 ## Incident sync and Android push notifications
 
 The app stores incidents in Supabase and refreshes both employee and technician views in real time. Android push notifications are sent to all technicians when a new incident is submitted and to the reporting employee when its status changes (including **En cours** and **Résolu**).
